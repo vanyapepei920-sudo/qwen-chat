@@ -89,6 +89,23 @@ var WEBSEARCH = (() => {
     meta(`${engineName} · ${list.length} результатов за ${ms} мс · ${new Date().toLocaleTimeString("ru-RU")}`);
   }
 
+  async function runSearchWith(engine, q) {
+    if (!q) { toast("Введите поисковый запрос", "warn"); return; }
+    const btn = document.querySelector("#wsGo");
+    if (btn) { btn.disabled = true; btn.textContent = "Поиск…"; }
+    const t0 = performance.now();
+    try {
+      const list = await RUNNERS[engine](q);
+      renderResults(list, ENGINES[engine].name, Math.round(performance.now() - t0));
+      logEvent("info", `Поиск «${q}» через ${ENGINES[engine].name}: ${list.length} результатов`);
+    } catch (e) {
+      meta("");
+      const box = document.querySelector("#wsResults");
+      if (box) box.innerHTML = `<p class="hint" style="color:#ff5470">✖ ${esc(e.message)}</p>`;
+      logEvent("warn", "Ошибка поиска: " + e.message);
+    } finally { if (btn) { btn.disabled = false; btn.textContent = "Искать"; } }
+  }
+
   async function runSearch() {
     const engSel = document.querySelector("#wsEngine"), qEl = document.querySelector("#wsQuery");
     if (!engSel || !qEl) return;
@@ -261,6 +278,23 @@ var WEBSEARCH = (() => {
   /* ─────────── init ─────────── */
   function init() {
     renderQuick();
+    // омни-строка в топбаре — поиск доступен с любой вкладке
+    const of = document.querySelector("#omniForm");
+    if (of) of.addEventListener("submit", e => {
+      e.preventDefault();
+      const q = document.querySelector("#omniInput").value.trim();
+      const eng = document.querySelector("#omniEngine").value;
+      if (!q) return;
+      document.querySelector("#wsQuery") && (document.querySelector("#wsQuery").value = q);
+      const es = document.querySelector("#wsEngine"); if (es) es.value = eng;
+      document.querySelector('[data-tab="websearch"]')?.click();
+      runSearchWith(eng, q);
+    });
+    document.addEventListener("keydown", e => {
+      if (e.key === "/" && !/input|textarea|select/i.test(document.activeElement.tagName)) {
+        e.preventDefault(); document.querySelector("#omniInput")?.focus();
+      }
+    });
     document.querySelector("#wsGo")?.addEventListener("click", runSearch);
     document.querySelector("#wsQuery")?.addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
     document.querySelector("#wsKeysSave")?.addEventListener("click", () => {
@@ -282,7 +316,7 @@ var WEBSEARCH = (() => {
     });
   }
 
-  return { init, runSearch };
+  return { init, runSearch, runSearchWith };
 })();
 
 document.addEventListener("DOMContentLoaded", () => WEBSEARCH.init());

@@ -5,10 +5,13 @@
 'use strict';
 
 var NETMON = (() => {
-  const PING_HOSTS = [
+  const PING_HOSTS_FULL = [
     ['GitHub CDN', 'https://api.github.com/zen?cb='],
     ['HTTP Bingo', 'https://httpbingo.org/status/200?cb='],
     ['Google 204', 'https://www.gstatic.com/generate_204?cb='],
+    ['Cloudflare', 'https://speed.cloudflare.com/__down?bytes=0&cb='],
+    ['Yandex', 'https://yandex.com/images/icon-home.svg?cb='],
+    ['Wikipedia', 'https://en.wikipedia.org/wiki/Special:Random?url=&cb='],
   ];
   const DL_URL = 'https://speed.cloudflare.com/__down?bytes=';
   const UL_URL = 'https://speed.cloudflare.com/__up';
@@ -17,7 +20,16 @@ var NETMON = (() => {
   let timer = null, running = false, dlAbort = null, ulAbort = null;
   let lastPing = [], lastJitter = 0, lastLoss = 0, sigSamples = [];
   let curDown = 0, curUp = 0;
+  let cycles = 0, totalDownBytes = 0, totalUpBytes = 0;
   const listeners = new Set();
+
+  /* ── конфигурация (управляется из netlab «Параметры») ─────── */
+  const cfg = {
+    periodMs: +(localStorage.getItem('nl_period') || 0) || 2500,
+    dlBytes: +(localStorage.getItem('nl_dl_bytes') || 0) || 4 * 1024 * 1024,
+    hostsCount: +(localStorage.getItem('nl_hosts') || 3) || 3,
+  };
+  function setConfig(patch) { Object.assign(cfg, patch); }
 
   /* ── helpers ─────────────────────────────────────────────── */
   const $ = id => document.getElementById(id);
@@ -38,7 +50,7 @@ var NETMON = (() => {
   /* ── ping cycle ──────────────────────────────────────────── */
   async function measurePing() {
     const res = [];
-    for (const [name, base] of PING_HOSTS) {
+    for (const [name, base] of PING_HOSTS_FULL.slice(0, cfg.hostsCount)) {
       try {
         const ms = await timedFetch(base + Date.now() + Math.random(), { cache: 'no-store' });
         res.push({ name, ok: true, ms: Math.round(ms) });
@@ -52,6 +64,7 @@ var NETMON = (() => {
       lastJitter = Math.round(sum / (oks.length - 1));
     } else lastJitter = 0;
     lastLoss = Math.round((res.filter(r => !r.ok).length / res.length) * 100);
+    if (oks.length) rememberPing(oks[0]);
     // сигнал: 100% при 20мс и 0 потерь → падает с пингом и потерями
     const avg = oks.length ? oks.reduce((a, b) => a + b, 0) / oks.length : 800;
     const byPing = Math.max(0, Math.min(100, 100 - (Math.min(avg, 500) / 500) * 100));
@@ -63,7 +76,7 @@ var NETMON = (() => {
 
   /* ── bandwidth burst ─────────────────────────────────────── */
   async function measureDownload(onProgress) {
-    const bytes = 4 * 1024 * 1024; // 4 МБ за цикл — быстро и точно
+    const bytes = cfg.dlBytes;
     dlAbort = new AbortController();
     const t0 = performance.now();
     let got = 0;
@@ -80,6 +93,7 @@ var NETMON = (() => {
     }
     const secs = (performance.now() - t0) / 1000;
     curDown = secs > 0 ? (got * 8) / secs : 0;
+    totalDownBytes += got;
     emit('download', { bps: curDown, bytes: got });
     return curDown;
   }
@@ -93,6 +107,7 @@ var NETMON = (() => {
     });
     const secs = (performance.now() - t0) / 1000;
     curUp = secs > 0 ? (blob.length * 8) / secs : 0;
+    totalUpBytes += blob.length;
     emit('upload', { bps: curUp, bytes: blob.length });
     return curUp;
   }
@@ -124,7 +139,8 @@ var NETMON = (() => {
       }
       await measurePing();
       if (phase === 0) fetchWhois();
-      phase++;
+      phase++; cycles++;
+      emit('stats', getStats());
       if (phase % 12 === 0) pushHistory();
     } catch (e) {
       if (e.name !== 'AbortError') emit('error', String(e.message || e));
@@ -145,13 +161,37 @@ var NETMON = (() => {
   }
   function history() { try { return JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch (e) { return []; } }
 
-  function start(periodMs = 2500) {
+  function getStats() {
+    const oks = lastPing.filter(r => r.ok).map(r => r.ms);
+    let pings = [];
+    try { pings = JSON.parse(localStorage.getItem(HIST_KEY + '_pings') || '[]'); } catch (e) {}
+    return { cycles, totalDownBytes, totalUpBytes,
+      pingMin: pings.length ? Math.min(...pings) : null,
+      pingMax: pings.length ? Math.max(...pings) : null,
+      pingAvg: pings.length ? Math.round(pings.reduce((a,b)=>a+b,0)/pings.length) : null,
+      pings };
+  }
+  function resetStats() {
+    cycles = 0; totalDownBytes = 0; totalUpBytes = 0;
+    try { localStorage.removeItem(HIST_KEY + '_pings'); } catch (e) {}
+    emit('stats', getStats());
+  }
+  function rememberPing(ms) {
+    if (ms == null) return;
+    try {
+      const a = JSON.parse(localStorage.getItem(HIST_KEY + '_pings') || '[]');
+      a.push(ms); if (a.length > 90) a.shift();
+      localStorage.setItem(HIST_KEY + '_pings', JSON.stringify(a));
+    } catch (e) {}
+  }
+  function start(periodMs) {
     if (running) return;
     running = true;
     cycle();
-    timer = setInterval(cycle, periodMs);
+    timer = setInterval(cycle, periodMs || cfg.periodMs);
     emit('state', { running: true });
   }
+  function restart() { stop(); setTimeout(() => start(), 60); }
   function stop() {
     running = false; clearInterval(timer); timer = null;
     try { dlAbort && dlAbort.abort(); ulAbort && ulAbort.abort(); } catch (e) {}
@@ -159,7 +199,8 @@ var NETMON = (() => {
   }
 
   return {
-    start, stop, on, history, pushHistory,
+    start, stop, restart, on, history, pushHistory, setConfig, resetStats, getStats,
+    get cfg() { return Object.assign({}, cfg); },
     get state() { return { running, curDown, curUp, lastPing, lastJitter, lastLoss, signal: sigSamples[sigSamples.length - 1] || 0, whois }; },
     fmtMbps,
   };

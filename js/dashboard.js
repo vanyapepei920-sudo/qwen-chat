@@ -168,6 +168,23 @@ var DASH = (() => {
     $("#setSound").addEventListener("change", e => { ui.sound = e.target.checked; store.set("ui.sound", ui.sound); });
     $("#setDense").addEventListener("change", e => { ui.dense = e.target.checked; store.set("ui.dense", ui.dense); applyUiFlags(); });
     $("#setGrid").addEventListener("change", e => { ui.grid = e.target.checked; store.set("ui.grid", ui.grid); applyUiFlags(); });
+    // ключи в настройках
+    const gk = $("#setGKey"), gc = $("#setGCx"), gt = $("#setGhToken");
+    if (gk && store.get("gs.key", "")) gk.placeholder = "ключ сохранён ✓";
+    if (gc) gc.value = store.get("gs.cx", "");
+    if (gt && localStorage.getItem("gh_pub_token")) gt.placeholder = "GitHub-ключ сохранён ✓";
+    const ss = $("#setServerState");
+    if (ss) ss.textContent = localStorage.getItem("ws_server_on") === "1" ? "ВКЛ ✓ (WebStudio)" : "выключен";
+    $("#setSaveKeys")?.addEventListener("click", () => {
+      const k = gk?.value.trim(), c = gc?.value.trim(), t = gt?.value.trim();
+      if (k) store.set("gs.key", k);
+      if (c) store.set("gs.cx", c);
+      if (t) { localStorage.setItem("gh_pub_token", t); localStorage.setItem("gh_tools_token", t); }
+      if (!k && !c && !t) { toast("Нечего сохранять — поля пустые", "warn"); return; }
+      toast("Ключи сохранены локально", "ok");
+      logEvent("info", "Сохранены API-ключи из настроек");
+      if (gk) gk.value = ""; if (gt) gt.value = "";
+    });
     $("#btnWipe").addEventListener("click", () => {
       modal("Очистить историю и журнал?", "<p>Будут удалены локальные замеры сети, speedtest-история и журнал событий.</p>", "Очистить")
         .then(ok => { if (!ok) return;

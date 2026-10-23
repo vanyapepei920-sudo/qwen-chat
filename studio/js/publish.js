@@ -62,6 +62,7 @@
     step('1/5 ✔ владелец: @' + me.login);
 
     const repoName = (opts.repoName || '').trim() || slugify(project.name);
+    const isPrivate = !!opts.private;
     step('2/5 Создание репозитория «' + repoName + '»…');
     let repo;
     try {
@@ -69,25 +70,35 @@
       step('2/5 ✔ репозиторий уже существует — обновляем файлы');
     } catch (e) {
       if (e.status === 404) {
-        repo = await gh('/user/repos', token, { method: 'POST', body: { name: repoName, public: true, auto_init: false, description: 'Published from WebStudio' } });
-        step('2/5 ✔ создан публичный репозиторий');
+        repo = await gh('/user/repos', token, { method: 'POST', body: { name: repoName, public: !isPrivate, private: isPrivate, auto_init: false, description: opts.readme ? String(opts.readme).slice(0, 100) : 'Published from WebStudio' } });
+        step('2/5 ✔ создан ' + (isPrivate ? 'приватный' : 'публичный') + ' репозиторий');
       } else if (e.status === 401) { throw new Error('Токен недействителен (401). Выпустите новый с правами Contents: Read/Write.'); }
       else if (e.status === 403) { throw new Error('Отказано в доступе (403). Проверьте scopes токена.'); }
       else throw e;
     }
 
-    step('3/5 Загрузка файлов (' + project.files.length + ')…');
-    let done = 0;
-    for (const f of project.files) {
-      const path = encodeURIComponent(f.path);
-      let sha = null;
-      try { const cur = await gh('/repos/' + me.login + '/' + repoName + '/contents/' + path, token); sha = cur && cur.sha; } catch (e) { if (e.status !== 404) throw e; }
-      await gh('/repos/' + me.login + '/' + repoName + '/contents/' + path, token, {
-        method: 'PUT',
-        body: { message: 'WebStudio: ' + (sha ? 'update ' : 'add ') + f.path, content: b64(f.content), ...(sha ? { sha } : {}) },
-      });
-      done++;
-      step('3/5 Файлы: ' + done + '/' + project.files.length + ' — ' + f.path);
+    const files = project.files.slice();
+    if (opts.addReadme && !files.some((f) => /^readme\.md$/i.test(f.path))) {
+      files.push({ path: 'README.md', content: opts.readme || ('# ' + project.name + '\n') });
+    }
+    step('3/5 Пакетная загрузка ' + files.length + ' файлов через Trees API…');
+    try {
+      let ref = null;
+      try { ref = await gh('/repos/' + me.login + '/' + repoName + '/git/ref/heads/main', token); } catch (e) { if (e.status !== 404) throw e; }
+      let baseSha = ref && ref.object && ref.object.sha;
+      if (!baseSha) {
+        const r0 = await gh('/repos/' + me.login + '/' + repoName + '/contents/README.md', token, { method: 'PUT', body: { message: 'init', content: b64('# ' + project.name + '\n') } });
+        baseSha = r0.commit.sha;
+      }
+      const tree = files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.content }));
+      const tr = await gh('/repos/' + me.login + '/' + repoName + '/git/trees', token, { method: 'POST', body: { base_tree: baseSha, tree } });
+      const cm = await gh('/repos/' + me.login + '/' + repoName + '/git/commits', token, { method: 'POST', body: { message: 'WebStudio publish ' + new Date().toISOString(), parents: [baseSha], tree: tr.sha } });
+      try { await gh('/repos/' + me.login + '/' + repoName + '/git/refs/heads/main', token, { method: 'PATCH', body: { sha: cm.sha, force: true } }); }
+      catch (e) { await gh('/repos/' + me.login + '/' + repoName + '/git/refs', token, { method: 'POST', body: { ref: 'refs/heads/main', sha: cm.sha } }); }
+      step('3/5 ✔ все файлы в одном коммите ' + cm.sha.slice(0, 7));
+    } catch (batchErr) {
+      step('3/5 пакет не удался (' + batchErr.message + ') — поштучно…');
+      await uploadOneByOne(me.login, repoName, files, token, step);
     }
 
     step('4/5 Включение GitHub Pages…');
@@ -102,7 +113,8 @@
 
     step('5/5 Ожидание сборки…');
     let url = 'https://' + me.login.toLowerCase() + '.github.io/' + repoName + '/';
-    for (let i = 0; i < 20; i++) {
+    const tries = opts.watchBuild === false ? 2 : 20;
+    for (let i = 0; i < tries; i++) {
       try {
         const st = await gh('/repos/' + me.login + '/' + repoName + '/pages', token);
         if (st && st.status && st.status !== 'building' && st.html_url) { url = st.html_url; break; }
@@ -111,6 +123,20 @@
     }
     step('5/5 ✔ Готово!');
     return { url, repo: repo.html_url, owner: me.login, repoName };
+  }
+
+  async function uploadOneByOne(login, repoName, files, token, step) {
+    let done = 0;
+    for (const f of files) {
+      const path = encodeURIComponent(f.path).replace(/%2F/g, '/');
+      let sha = null;
+      try { const cur = await gh('/repos/' + login + '/' + repoName + '/contents/' + path, token); sha = cur && cur.sha; } catch (e) { if (e.status !== 404) throw e; }
+      await gh('/repos/' + login + '/' + repoName + '/contents/' + path, token, {
+        method: 'PUT', body: { message: 'WebStudio: ' + (sha ? 'update ' : 'add ') + f.path, content: b64(f.content), ...(sha ? { sha } : {}) },
+      });
+      done++;
+      if (done % 3 === 0 || done === files.length) step('3/5 Файлы: ' + done + '/' + files.length + ' — ' + f.path);
+    }
   }
 
   window.Publisher = { publish, checkToken, slugify, LS_TOKEN };

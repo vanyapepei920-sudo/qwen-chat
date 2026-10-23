@@ -393,3 +393,17 @@ textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
 .ws-tools .wt{justify-content:flex-start;text-align:left;font-size:12.5px}
 .ws-tools .wt-active{border-color:#3ee0a4;color:#3ee0a4}
 .ws-out{white-space:pre-wrap;word-break:break-word;background:#0b1220;border:1px solid var(--line,#233);border-radius:8px;padding:12px;font-size:12.5px;line-height:1.5;min-height:120px;max-height:340px;overflow:auto;color:#cfe3f5}
+
+/* ── netlab / омни-поиск ─────────────────────────── */
+.omni{display:flex;align-items:center;gap:6px;background:var(--bg2,#0d1520);border:1px solid var(--line,#1e2a3a);border-radius:9px;padding:4px 8px}
+.omni input{background:none;border:none;color:var(--fg,#dce7f5);width:180px;font-size:13px;outline:none}
+.omni select{background:none;border:none;color:#7fdcff;font-size:12px;outline:none;cursor:pointer}
+.nl-tools{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+.nl-out{min-height:150px;max-height:340px;overflow:auto;font-size:12.5px;line-height:1.55;white-space:pre-wrap}
+.nl-cells .st-cell b{font-size:15px}
+.nl-settings .input.num{width:74px}
+.nl-settings .select{background:var(--bg2,#0d1520);color:var(--fg,#dce7f5);border:1px solid var(--line,#1e2a3a);border-radius:6px;padding:4px 8px}
+.input.wide{width:220px;max-width:60%}
+@media(max-width:1100px){.omni input{width:110px}}
+.nl-alarm-btn{border-color:#ff5470;color:#ff5470;animation:nlblink 1.2s infinite}
+@keyframes nlblink{50%{opacity:.45}}

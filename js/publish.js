@@ -46,7 +46,7 @@
   const SRC_FILES = [
     "index.html", "README.md", ".gitignore",
     "css/style.css",
-    "js/utils.js", "js/charts.js", "js/dashboard.js", "js/publish.js", "js/netmonitor.js", "js/websearch.js",
+    "js/utils.js", "js/charts.js", "js/dashboard.js", "js/publish.js", "js/netmonitor.js", "js/websearch.js", "js/netlab.js",
     "studio/index.html", "studio/css/studio.css",
     "studio/js/store.js", "studio/js/zip.js", "studio/js/publish.js", "studio/js/studio.js",
     "js/nettest.js",
@@ -133,26 +133,54 @@
       logLine("2/5 ✔ репозиторий существует — обновляем файлы");
     } catch (e) {
       if (e.status === 404) {
-        repo = await ghFetch("/user/repos", { method: "POST", body: JSON.stringify({ name: repoName, public: true, auto_init: false }) }, token);
-        logLine("2/5 ✔ создан публичный репозиторий");
+        repo = await ghFetch("/user/repos", { method: "POST", body: JSON.stringify({ name: repoName, public: !pubPrivate, private: pubPrivate, auto_init: false, description: "Published from Syntheco Console / WebStudio" }) }, token);
+        logLine("2/5 ✔ создан " + (pubPrivate ? "приватный" : "публичный") + " репозиторий");
       } else if (e.status === 401) throw new Error("Ключ недействителен (401). Выпустите новый с правами Contents: Read and Write.");
       else if (e.status === 403) throw new Error("Доступ запрещён (403). Проверьте права ключа.");
       else throw e;
     }
 
     const files = await collectFiles(logLine);
-    logLine("3/5 Загрузка " + files.length + " файлов…");
-    let i = 0;
-    for (const f of files) {
-      const enc = "/repos/" + me.login + "/" + repoName + "/contents/" + encodeURIComponent(f.path).replace(/%2F/g, "/");
-      let sha = null;
-      try { const cur = await ghFetch(enc, {}, token); sha = cur && cur.sha; } catch (e) { if (e.status !== 404) throw e; }
-      await ghFetch(enc, {
-        method: "PUT",
-        body: JSON.stringify({ message: "publish: " + f.path, content: b64(f.content), ...(sha ? { sha } : {}) }),
+    logLine("3/5 Загрузка " + files.length + " файлов (пакетный коммит через Trees API)…");
+    try {
+      // один коммит со всеми файлами — быстрее и без rate-limit на файл
+      let ref;
+      try { ref = await ghFetch("/repos/" + me.login + "/" + repoName + "/git/ref/heads/main", {}, token); }
+      catch (e) { ref = null; }
+      let baseSha = ref && ref.object && ref.object.sha;
+      if (!baseSha) {
+        // пустой репо — создаём initial commit из README
+        const r0 = await ghFetch("/repos/" + me.login + "/" + repoName + "/contents/README.md", {
+          method: "PUT", body: JSON.stringify({ message: "init", content: b64("# " + repoName + "\n") }),
+        }, token);
+        baseSha = r0.commit.sha;
+      }
+      const tree = [];
+      for (const f of files) tree.push({ path: f.path, mode: "100644", type: "blob", content: f.content });
+      const tr = await ghFetch("/repos/" + me.login + "/" + repoName + "/git/trees", {
+        method: "POST", body: JSON.stringify({ base_tree: baseSha, tree }),
       }, token);
-      i++; setProgress(10 + (i / files.length) * 60);
-      if (i % 3 === 0 || i === files.length) logLine("3/5 ✔ " + i + "/" + files.length + " — " + f.path);
+      const cm = await ghFetch("/repos/" + me.login + "/" + repoName + "/git/commits", {
+        method: "POST", body: JSON.stringify({ message: "WebStudio publish " + new Date().toISOString(), parents: [baseSha], tree: tr.sha }),
+      }, token);
+      try { await ghFetch("/repos/" + me.login + "/" + repoName + "/git/refs/heads/main", { method: "PATCH", body: JSON.stringify({ sha: cm.sha, force: true }) }, token); }
+      catch (e) { await ghFetch("/repos/" + me.login + "/" + repoName + "/git/refs", { method: "POST", body: JSON.stringify({ ref: "refs/heads/main", sha: cm.sha }) }, token); }
+      setProgress(70);
+      logLine("3/5 ✔ все файлы запушены одним коммитом " + cm.sha.slice(0, 7));
+    } catch (err) {
+      logLine("3/5 пакетный режим не удался (" + err.message + ") — грузим файлы по одному…");
+      let i = 0;
+      for (const f of files) {
+        const enc = "/repos/" + me.login + "/" + repoName + "/contents/" + encodeURIComponent(f.path).replace(/%2F/g, "/");
+        let sha = null;
+        try { const cur = await ghFetch(enc, {}, token); sha = cur && cur.sha; } catch (e) { if (e.status !== 404) throw e; }
+        await ghFetch(enc, {
+          method: "PUT",
+          body: JSON.stringify({ message: "publish: " + f.path, content: b64(f.content), ...(sha ? { sha } : {}) }),
+        }, token);
+        i++; setProgress(10 + (i / files.length) * 60);
+        if (i % 3 === 0 || i === files.length) logLine("3/5 ✔ " + i + "/" + files.length + " — " + f.path);
+      }
     }
 
     logLine("4/5 Включение GitHub Pages…");
@@ -205,15 +233,25 @@
     } finally { autoRunning = false; }
   }
 
+  let pubRepoOverride = "";
+  let pubPrivate = false;
+
   /* ---------- модалка: ТОЛЬКО поле API-ключа ---------- */
   function openModal(prefill) {
     const saved = prefill != null ? prefill : (localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token") || "");
     modal(`
       <h3 style="margin-top:0">Публикация на GitHub Pages</h3>
-      <p class="hint">Нужен <b>только API-ключ</b>. Владелец, имя репозитория и Pages определяются и настраиваются автоматически. Ничего больше вводить не нужно.</p>
-      <label>API-ключ (GitHub token,Fine-grained с Contents:RW + Administration:RW или classic scope repo)
+      <p class="hint">Достаточно <b>API-ключа</b>: владелец определяется автоматически, имя репо генерируется, Pages включается сам. Ниже — доп. параметры при желании.</p>
+      <label>API-ключ (GitHub token, Fine-grained с Contents:RW + Administration:RW или classic scope repo)
         <input id="pubToken" type="password" placeholder="ghp_… или github_pat_…" value="${String(saved).replace(/"/g, "&quot;")}" autocomplete="off" autofocus />
       </label>
+      <details style="margin:6px 0">
+        <summary class="hint" style="cursor:pointer">⚙ дополнительные параметры публикации</summary>
+        <label>Имя репозитория (пусто = авто)
+          <input id="pubRepo" placeholder="syntheco-console-…" /></label>
+        <label class="chk"><input id="pubPrivate" type="checkbox"/> приватный репозиторий (Pages недоступен для free-аккаунтов)</label>
+        <label class="chk"><input id="pubAutoAfter" type="checkbox" checked/> после этой публикации обновлять сайт автоматически (по ключу)</label>
+      </details>
       <label class="chk"><input id="pubRemember" type="checkbox" ${saved ? "checked" : ""}/> запомнить ключ — следующие публикации будут автоматическими</label>
       <div class="pub-track"><div class="pub-fill" id="pubBar"></div></div>
       <ul class="pub-log mono" id="pubLog"></ul>`,
@@ -223,10 +261,13 @@
         if (!token) { toast("Введите API-ключ", "warn"); return; }
         if ($("#pubRemember").checked) { localStorage.setItem(LS_TOKEN, token); localStorage.setItem("gh_tools_token", token); }
         else localStorage.removeItem(LS_TOKEN);
+        pubRepoOverride = ($("#pubRepo") && $("#pubRepo").value.trim()) || "";
+        pubPrivate = !!($("#pubPrivate") && $("#pubPrivate").checked);
+        if ($("#pubAutoAfter") && !$("#pubAutoAfter").checked) sessionStorage.setItem("gh_pub_autorun", "9");
         const btn = $("#btnPublish");
         if (btn) btn.textContent = "⏳ Публикация…";
         try {
-          const res = await runPublish(token, "");
+          const res = await runPublish(token, pubRepoOverride);
           toast("Опубликовано: " + res.url, "ok", 9000);
           const link = $("#modalLink");
           if (link) { link.href = res.url; link.hidden = false; }

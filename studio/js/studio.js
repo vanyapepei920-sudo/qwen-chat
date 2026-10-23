@@ -112,11 +112,19 @@
     if (!proj.files.length) { toast('Проект пуст — нечего публиковать', 'warn'); return; }
 
     let savedToken = localStorage.getItem(Publisher.LS_TOKEN) || localStorage.getItem('gh_pub_token') || localStorage.getItem('gh_tools_token') || '';
+    const lastRepo = localStorage.getItem('ws_last_repo_' + pid) || '';
     const ok = await modal('Опубликовать на GitHub', `
-      <p class="hint">Нужен <b>только API-ключ</b>: владелец, имя репозитория (по названию проекта «${esc(proj.name)}») и Pages определяются автоматически.</p>
+      <p class="hint">Достаточно <b>API-ключа</b>: владелец и Pages настраиваются автоматически${lastRepo ? ', последний репозиторий: <code>' + esc(lastRepo) + '</code>' : ''}.</p>
       <label>API-ключ (GitHub token,Fine-grained с Contents:RW + Administration:RW или classic scope repo)
         <input type="password" id="pubToken" class="input" placeholder="ghp_… / github_pat_…" value="${esc(savedToken)}" autocomplete="off" autofocus />
       </label>
+      <details style="margin:6px 0"><summary class="hint" style="cursor:pointer">⚙ параметры публикации</summary>
+        <label>Имя репозитория (пусто = из названия проекта)
+          <input id="pubRepoName" class="input" placeholder="${esc(Publisher.slugify(proj.name))}" /></label>
+        <label class="pub-adv"><input type="checkbox" id="pubPrivate"/> приватный репозиторий</label>
+        <label class="pub-adv"><input type="checkbox" id="pubAddReadme" checked/> добавить README.md с описанием проекта</label>
+        <label class="pub-adv"><input type="checkbox" id="pubWatchBuild" checked/> дождаться сборки Pages (до 30 с)</label>
+      </details>
       <label class="pub-adv"><input type="checkbox" id="pubRemember" ${savedToken ? 'checked' : ''}/> запомнить ключ — следующие публикации автоматические</label>
       <div class="pub-progress" id="pubProg"><i></i></div>
       <ul class="pub-log mono" id="pubLog"></ul>`, '▶ Опубликовать');
@@ -140,7 +148,15 @@
     };
 
     try {
-      const res = await Publisher.publish(proj, { token }, stepCb);
+      const res = await Publisher.publish(proj, {
+        token,
+        repoName: ($id('pubRepoName') && $id('pubRepoName').value.trim()) || '',
+        private: !!$id('pubPrivate').checked,
+        addReadme: !!$id('pubAddReadme').checked,
+        readme: '# ' + proj.name + '\n\nСайт создан в WebStudio.\n',
+        watchBuild: !!$id('pubWatchBuild').checked,
+      }, stepCb);
+      localStorage.setItem('ws_last_repo_' + pid, res.owner + '/' + res.repoName);
       toast('Опубликовано! ' + res.url, 'ok');
       beep(1200, 0.15);
       const link = $id('modalLink');
@@ -250,6 +266,9 @@
   const TEMPLATES = {
     'Пустой сайт': null,
     'Лендинг': { extra: { 'about.html': '<!doctype html>\n<html lang="ru"><head><meta charset="UTF-8"><title>О нас</title><link rel="stylesheet" href="css/style.css"></head><body class="hero"><h1>О нас</h1><p><a href="index.html">← главная</a></p></body></html>', 'js/nav.js': "console.log('nav ok');\n" } },
+    'Блог': { extra: { 'posts/hello.html': '<!doctype html>\n<html lang="ru"><head><meta charset="UTF-8"><title>Первая запись</title><link rel="stylesheet" href="css/style.css"></head><body><article><h1>Привет, блог!</h1><p>Первая запись, созданная шаблоном WebStudio.</p><a href="../index.html">&larr; назад</a></article></body></html>', 'js/blog.js': "console.log('blog engine ok');\n" } },
+    'Портфолио': { extra: { 'projects.html': '<!doctype html>\n<html lang="ru"><head><meta charset="UTF-8"><title>Проекты</title><link rel="stylesheet" href="css/style.css"></head><body><h1>Мои проекты</h1><div class="card"><h3>Сайт N1</h3><p>Описание</p></div><a href="index.html">&larr; главная</a></body></html>', 'contact.html': '<!doctype html>\n<html lang="ru"><head><meta charset="UTF-8"><title>Контакты</title><link rel="stylesheet" href="css/style.css"></head><body><h1>Связаться</h1><form><input placeholder="имя"/><input type="email" placeholder="email"/><button>Отправить</button></form><a href="index.html">&larr; главная</a></body></html>' } },
+    'Магазин (витрина)': { extra: { 'catalog.html': '<!doctype html>\n<html lang="ru"><head><meta charset="UTF-8"><title>Каталог</title><link rel="stylesheet" href="css/style.css"></head><body><h1>Каталог</h1><ul id="goods"></ul><script src="js/shop.js"><\/script></body></html>', 'js/shop.js': "var GOODS=[{n:'Товар 1',p:990},{n:'Товар 2',p:1490}];document.getElementById('goods').innerHTML=GOODS.map(function(g){return '<li>'+g.n+' - '+g.p+' <button>в корзину</button></li>';}).join('');\n" } },
     'Todo-приложение': { extra: { 'js/todo.js': "const KEY='ws_todo';\nlet items=JSON.parse(localStorage.getItem(KEY)||'[]');\nconst list=document.getElementById('list'),inp=document.getElementById('inp');\nfunction render(){list.innerHTML=items.map((t,i)=>'<li>'+t+' <button data-i='+i+'>✕</button></li>').join('');}\nlist.onclick=e=>{if(e.target.tagName==='BUTTON'){items.splice(+e.target.dataset.i,1);localStorage.setItem(KEY,JSON.stringify(items));render();}};\ninp.closest('form').onsubmit=e=>{e.preventDefault();items.push(inp.value);localStorage.setItem(KEY,JSON.stringify(items));inp.value='';render();};\nrender();\n", 'todo.html': '<!doctype html>\n<html lang="ru"><head><meta charset="UTF-8"><title>Todo</title><link rel="stylesheet" href="css/style.css"></head><body class="hero"><h1>Задачи</h1><form><input id="inp" placeholder="новая задача"/></form><ul id="list"></ul><p><a href="index.html">← главная</a></p><script src="js/todo.js"><\/script></body></html>' } },
   };
 
@@ -258,7 +277,7 @@
     const ok = await modal('Новый проект', `
       <label>Название проекта<input id="npName" class="input" placeholder="Мой сайт" autofocus /></label>
       <label>Шаблон<select id="npTpl" class="select">
-        <option>Пустой сайт</option><option>Лендинг</option><option>Todo-приложение</option></select></label>
+        <option>Пустой сайт</option><option>Лендинг</option><option>Todo-приложение</option><option>Блог</option><option>Портфолио</option><option>Магазин (витрина)</option></select></label>
       <p class="hint">Будет создана виртуальная ФС: index.html, css/style.css, js/app.js, README.md.</p>`, 'Создать');
     if (!ok) return;
     const name = ($id('npName').value || '').trim() || 'Мой сайт';

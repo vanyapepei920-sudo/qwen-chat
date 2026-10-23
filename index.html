@@ -42,10 +42,23 @@
       <button class="tab active" role="tab" data-tab="netmon">📡 Интернет LIVE</button>
       <button class="tab" role="tab" data-tab="nettools">🌐 Speedtest · GitHub</button>
       <button class="tab" role="tab" data-tab="websearch">🔎 Поиск в интернете</button>
+      <button class="tab" role="tab" data-tab="netlab">🧪 Сеть-лаборатория</button>
       <button class="tab" role="tab" data-tab="settings">Настройки</button>
     </nav>
 
     <div class="top-actions">
+      <form class="omni" id="omniForm" title="Поиск по интернету — Enter (движок: Ctrl+Enter переключает)">
+        <span class="omni-icon">🔎</span>
+        <input id="omniInput" placeholder="Поиск в интернете…" autocomplete="off" />
+        <select id="omniEngine" title="Движок поиска">
+          <option value="google">Google API</option>
+          <option value="ddg">DuckDuckGo</option>
+          <option value="wiki">Wikipedia</option>
+          <option value="gh">GitHub</option>
+          <option value="hn">Hacker News</option>
+        </select>
+      </form>
+      <button class="btn btn-ghost nl-alarm-btn" id="nlAlarmBtn" hidden title="Качество связи хуже порогов — открыть Сеть-лабораторию" onclick="document.querySelector('[data-tab=&quot;netlab&quot;]').click()">⚠ связь</button>
       <div class="clock mono" id="clock">--:--:--</div>
       <button class="btn btn-live" id="btnLive" title="Пауза / запуск потока данных">
         <span class="pulse-dot"></span><span id="liveLabel">LIVE</span>
@@ -296,6 +309,75 @@
         </div>
       </div>
 
+      <!-- ── TAB: NET LAB — расширенные тесты, мониторинги, параметры ── -->
+      <div class="panel" id="panel-netlab">
+        <div class="row">
+          <article class="card st-card">
+            <header class="card-head"><h2>🧪 Сеть-лаборатория — 12 тестов и параметров</h2>
+              <span class="hint mono" id="nlHint">все тесты работают без установки и ключей</span></header>
+            <div class="ws-tools nl-tools" id="nlTools">
+              <button class="btn btn-ghost wt" data-tool="speedtest">🚀 Быстрый speedtest (30 с)</button>
+              <button class="btn btn-ghost wt" data-tool="trace">🗺 Trace задержки по регионам</button>
+              <button class="btn btn-ghost wt" data-tool="bwpoll">📊 Замер пропускной способности 60 с</button>
+              <button class="btn btn-ghost wt" data-tool="browser">🌐 Параметры браузера и соединения</button>
+              <button class="btn btn-ghost wt" data-tool="storage">💾 Доступное хранилище (Storage Mgmt)</button>
+              <button class="btn btn-ghost wt" data-tool="media">🎥 Годность для стрима / звонка</button>
+              <button class="btn btn-ghost wt" data-tool="dnssec">🔐 DNS через Cloudflare / Google</button>
+              <button class="btn btn-ghost wt" data-tool="httpver">📡 HTTP/2 push + TLS-рукопожатие</button>
+              <button class="btn btn-ghost wt" data-tool="lossburst">📉 Потери пакетов: серия из 30</button>
+              <button class="btn btn-ghost wt" data-tool="uplatency">⏱ Latency под upload-нагрузкой</button>
+              <button class="btn btn-ghost wt" data-tool="proxy">🕵️ Детект VPN / прокси / дата-центра</button>
+              <button class="btn btn-ghost wt" data-tool="uptime">🟢 Uptime-монитор сайта (фоновый)</button>
+            </div>
+            <pre class="mono ws-out nl-out" id="nlOut">Выберите тест ↑ — результат появится здесь.</pre>
+          </article>
+
+          <div class="col">
+            <article class="card st-card">
+              <header class="card-head"><h2>📈 Непрерывный мониторинг канала</h2></header>
+              <div class="nm-cells nl-cells">
+                <div class="st-cell"><small>Мин пинг</small><b class="mono" id="nlPingMin">—</b></div>
+                <div class="st-cell"><small>Средн. пинг</small><b class="mono" id="nlPingAvg">—</b></div>
+                <div class="st-cell"><small>Макс пинг</small><b class="mono" id="nlPingMax">—</b></div>
+                <div class="st-cell"><small>Потери всего</small><b class="mono" id="nlLossTotal">—</b></div>
+                <div class="st-cell"><small>Циклов замеров</small><b class="mono" id="nlCycles">0</b></div>
+                <div class="st-cell"><small>Трафик сессии ↓↑</small><b class="mono" id="nlTraffic">0 МБ</b></div>
+              </div>
+              <canvas id="nlChart" width="640" height="150" style="width:100%"></canvas>
+              <p class="hint mono" id="nlChartMeta">пинг по всем хостам · последние 90 замеров</p>
+            </article>
+            <article class="card">
+              <header class="card-head"><h2>⚙️ Параметры сети и тестов</h2></header>
+              <div class="settings-list nl-settings">
+                <label class="switch-row"><span>Период live-монитора</span>
+                  <select id="nlPeriod" class="select">
+                    <option value="1500">1.5 с</option><option value="2500" selected>2.5 с</option>
+                    <option value="5000">5 с</option><option value="10000">10 с</option>
+                  </select></label>
+                <label class="switch-row"><span>Объём download-замера</span>
+                  <select id="nlDlBytes" class="select">
+                    <option value="1048576">1 МБ</option><option value="4194304" selected>4 МБ</option>
+                    <option value="10485760">10 МБ</option>
+                  </select></label>
+                <label class="switch-row"><span>Хосты ping-панели</span>
+                  <select id="nlHosts" class="select">
+                    <option value="3" selected>3 (быстро)</option><option value="6">6 (полные)</option>
+                  </select></label>
+                <label class="switch-row"><span>Автопауза live-монитора в фоне</span>
+                  <input type="checkbox" id="nlAutoPause" checked /></label>
+                <label class="switch-row"><span>Порог тревоги: пинг &gt;</span>
+                  <input type="number" id="nlAlarmPing" class="input num" value="150" min="10" max="2000" /> мс</label>
+                <label class="switch-row"><span>Порог тревоги: сигнал &lt;</span>
+                  <input type="number" id="nlAlarmSig" class="input num" value="45" min="1" max="99" /> %</label>
+                <label class="chk switch-row"><input type="checkbox" id="nlBeepAlarm" /> звуковой сигнал тревоги</label>
+              </div>
+              <button class="btn btn-primary" id="nlApplyParams">Применить параметры</button>
+              <button class="btn btn-danger" id="nlResetStats">Сбросить статистику</button>
+            </article>
+          </div>
+        </div>
+      </div>
+
       <div class="panel" id="panel-settings">
         <div class="row row-set">
           <article class="card">
@@ -307,7 +389,16 @@
                 <input type="checkbox" id="setSound" checked /></label>
               <label class="switch-row"><span>Показывать сетку на графиках</span>
                 <input type="checkbox" id="setGrid" checked /></label>
+              <label class="switch-row"><span>Google API key (Custom Search JSON)</span>
+                <input type="password" id="setGKey" class="input num wide" placeholder="ключ из console.cloud.google.com" autocomplete="off" /></label>
+              <label class="switch-row"><span>Search Engine ID (cx)</span>
+                <input type="text" id="setGCx" class="input num wide" placeholder="ID поисковика CSE" /></label>
+              <label class="switch-row"><span>GitHub API-ключ (публикация, star/fork/gist)</span>
+                <input type="password" id="setGhToken" class="input num wide" placeholder="github_pat_… / ghp_…" autocomplete="off" /></label>
+              <label class="switch-row"><span>Включён ли сервер БД WebStudio</span>
+                <b class="mono" id="setServerState">—</b></label>
             </div>
+            <button class="btn btn-primary" id="setSaveKeys">💾 Сохранить ключи</button>
             <hr/>
             <button class="btn btn-danger" id="btnWipe">Очистить историю замеров и журнал</button>
           </article>
@@ -344,5 +435,6 @@
   <script src="./js/nettest.js"></script>
   <script src="./js/netmonitor.js"></script>
   <script src="./js/websearch.js"></script>
+  <script src="./js/netlab.js"></script>
 </body>
 </html>
