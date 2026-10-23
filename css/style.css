@@ -324,3 +324,20 @@ canvas { width: 100%; display: block; border-radius: 8px; }
   .tabs { order: 3; width: 100%; overflow-x: auto; }
   .row-second, .row-set, .calc-grid { grid-template-columns: 1fr; }
 }
+
+/* ─────────── PUBLISH TO GITHUB (кнопка + модалка) ─────────── */
+.btn-gh { display: inline-flex; align-items: center; gap: 8px; background: #0d1117; color: #e6edf3; border-color: #30363d; }
+.btn-gh:hover { border-color: #8b949e; color: #fff; filter: brightness(1.15); }
+.btn-gh svg { flex: none; }
+.pub-note { font-size: 12.8px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+.pub-label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 10px; }
+.pub-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.inp { width: 100%; margin-top: 4px; background: var(--bg, #0a1420); color: var(--text, #dbe9f5);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; font-size: 13px; box-sizing: border-box; }
+.inp:focus { outline: none; border-color: var(--accent); }
+.pub-track { height: 6px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; margin: 6px 0 10px; }
+.pub-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #58b6ff); transition: width .3s; }
+.pub-log { max-height: 150px; overflow-y: auto; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap;
+  background: #06101c; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; color: #9fe8c8; }
+.pub-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin: 0; }
+#modalLink { text-decoration: none; }
