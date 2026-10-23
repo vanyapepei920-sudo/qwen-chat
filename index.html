@@ -1,17 +1,271 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Really Visuals — продакшн видеографики и моушн-дизайна. Анимация, VFX, титры, брендинг для кино, рекламы и музыки." />
-    <title>Really Visuals — продакшн видеографики</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Manrope:wght@400;500;700&display=swap" rel="stylesheet" />
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Синтеко Лаб — интерактивный дашборд промышленного мониторинга IoT: телеметрия в реальном времени, графики, алерты, журнал событий, расчёт KPI." />
+  <meta name="theme-color" content="#070b12" />
+  <title>Синтеко Лаб — IoT-мониторинг производства</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230b1524'/><path d='M10 40 L22 28 L32 36 L54 14' stroke='%2338e896' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='54' cy='14' r='5' fill='%23ffb020'/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <!-- ══════════ TOPBAR ══════════ -->
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 64 64" class="brand-logo" aria-hidden="true">
+        <path d="M10 40 L22 28 L32 36 L54 14" stroke="var(--ok)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="54" cy="14" r="6" fill="var(--warn)"/>
+      </svg>
+      <div>
+        <b>СИНТЕКО&nbsp;ЛАБ</b>
+        <small>Industrial Telemetry Console · v3.2</small>
+      </div>
+    </div>
+
+    <nav class="tabs" role="tablist" id="tabs">
+      <button class="tab active" role="tab" data-tab="overview">Обзор</button>
+      <button class="tab" role="tab" data-tab="analytics">Аналитика</button>
+      <button class="tab" role="tab" data-tab="events">Журнал событий <span class="badge" id="badgeEvents" hidden>0</span></button>
+      <button class="tab" role="tab" data-tab="settings">Настройки</button>
+    </nav>
+
+    <div class="top-actions">
+      <div class="clock mono" id="clock">--:--:--</div>
+      <button class="btn btn-live" id="btnLive" title="Пауза / запуск потока данных">
+        <span class="pulse-dot"></span><span id="liveLabel">LIVE</span>
+      </button>
+      <button class="btn btn-primary" id="btnReport">Отчёт</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ══════════ SIDEBAR ══════════ -->
+    <aside class="sidebar">
+      <div class="side-block">
+        <h3>Цеха</h3>
+        <ul class="shop-list" id="shopList"></ul>
+      </div>
+      <div class="side-block">
+        <h3>Качество сигнала</h3>
+        <div class="signal-meter" id="signalMeter"></div>
+        <p class="side-note">Средняя задержка канала: <b class="mono" id="latencyVal">— мс</b></p>
+      </div>
+      <div class="side-block">
+        <h3>Быстрые действия</h3>
+        <div class="quick-actions">
+          <button class="btn btn-ghost" data-cmd="calibrate">Калибровка датчиков</button>
+          <button class="btn btn-ghost" data-cmd="snapshot">Снимок телеметрии</button>
+          <button class="btn btn-ghost" data-cmd="reset-counters">Сброс счётчиков</button>
+          <button class="btn btn-danger" data-cmd="emergency">Аварийный стоп ✕</button>
+        </div>
+      </div>
+      <div class="side-block uptime">
+        <h3>Аптайм сессии</h3>
+        <div class="mono big" id="uptimeVal">00:00:00</div>
+        <div class="progress"><i id="slaBar" style="width:0%"></i></div>
+        <p class="side-note">SLA-цель: <b>99.2%</b> · факт: <b id="slaVal">—</b></p>
+      </div>
+    </aside>
+
+    <!-- ══════════ CONTENT ══════════ -->
+    <section class="content" id="content">
+
+      <!-- ── TAB: OVERVIEW ── -->
+      <div class="panel active" id="panel-overview">
+        <div class="kpis" id="kpiRow"><!-- KPI-карточки рендерятся JS --></div>
+
+        <div class="row row-main">
+          <article class="card chart-card">
+            <header class="card-head">
+              <h2>Телеметрия линии
+                <select id="metricSel" class="select">
+                  <option value="throughput">Производительность, ед/мин</option>
+                  <option value="temperature">Температура, °C</option>
+                  <option value="vibration">Вибрация, мм/с</option>
+                  <option value="power">Потребление, кВт</option>
+                </select>
+              </h2>
+              <div class="chart-tools">
+                <button class="chip active" data-window="60">1м</button>
+                <button class="chip" data-window="300">5м</button>
+                <button class="chip" data-window="900">15м</button>
+              </div>
+            </header>
+            <canvas id="lineChart" height="300"></canvas>
+            <footer class="chart-foot mono">
+              <span>min <b id="statMin">—</b></span>
+              <span>avg <b id="statAvg">—</b></span>
+              <span>max <b id="statMax">—</b></span>
+              <span>σ <b id="statStd">—</b></span>
+              <span>trend <b id="statTrend">—</b></span>
+            </footer>
+          </article>
+
+          <article class="card gauge-card">
+            <header class="card-head"><h2>Загрузка мощностей</h2></header>
+            <canvas id="gauge" width="260" height="210"></canvas>
+            <div class="legend" id="gaugeLegend"></div>
+          </article>
+        </div>
+
+        <div class="row row-second">
+          <article class="card">
+            <header class="card-head"><h2>Распределение брака по типам</h2></header>
+            <canvas id="donut" width="420" height="240"></canvas>
+          </article>
+
+          <article class="card alerts-card">
+            <header class="card-head">
+              <h2>Активные алерты</h2>
+              <button class="btn btn-small" id="btnAckAll">Принять все</button>
+            </header>
+            <ul class="alert-list" id="alertList"></ul>
+          </article>
+
+          <article class="card shops-mini">
+            <header class="card-head"><h2>Статус цехов</h2></header>
+            <div id="shopBars"></div>
+          </article>
+        </div>
+      </div>
+
+      <!-- ── TAB: ANALYTICS ── -->
+      <div class="panel" id="panel-analytics">
+        <div class="row row-an1">
+          <article class="card">
+            <header class="card-head"><h2>OEE по сменам (последние 12)</h2></header>
+            <canvas id="oeeChart" height="280"></canvas>
+            <p class="hint">OEE = Доступность × Производительность × Качество. Порог цели — 85%.</p>
+          </article>
+          <article class="card">
+            <header class="card-head"><h2>Матрица рисков</h2></header>
+            <div class="risk-matrix" id="riskMatrix"></div>
+            <p class="hint">Вероятность инцидента × тяжесть последствий. Наведите на ячейку.</p>
+          </article>
+        </div>
+        <div class="row row-an2">
+          <article class="card wide">
+            <header class="card-head">
+              <h2>Экономический эффект</h2>
+              <div class="seg" id="calcSeg">
+                <button class="chip active" data-mode="oee">Рост OEE</button>
+                <button class="chip" data-mode="defect">Снижение брака</button>
+                <button class="chip" data-mode="energy">Экономия энергии</button>
+              </div>
+            </header>
+            <div class="calc-grid">
+              <label>Текущие показатели (подставляются из телеметрии):
+                <div class="calc-readouts mono" id="calcReadouts"></div>
+              </label>
+              <label><span id="sliderLabel">Прирост OEE</span>: <b class="mono" id="sliderVal">5%</b>
+                <input type="range" id="calcSlider" min="1" max="30" value="5" />
+              </label>
+              <div class="calc-result">
+                <div class="calc-num mono" id="calcNum">0 ₽</div>
+                <div class="calc-sub">ожидаемый эффект за год</div>
+                <canvas id="calcChart" height="120"></canvas>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <!-- ── TAB: EVENTS ── -->
+      <div class="panel" id="panel-events">
+        <article class="card">
+          <header class="card-head">
+            <h2>Журнал событий</h2>
+            <div class="event-tools">
+              <input type="search" id="eventSearch" placeholder="Поиск по описанию…" />
+              <select id="eventLevel" class="select">
+                <option value="all">Все уровни</option>
+                <option value="info">INFO</option>
+                <option value="warn">WARN</option>
+                <option value="error">ERROR</option>
+                <option value="crit">CRIT</option>
+              </select>
+              <select id="eventSort" class="select">
+                <option value="time-desc">Сначала новые</option>
+                <option value="time-asc">Сначала старые</option>
+                <option value="level">По уровню</option>
+              </select>
+              <button class="btn btn-small" id="btnExportCsv">CSV ↓</button>
+            </div>
+          </header>
+          <div class="table-wrap">
+            <table class="table" id="eventTable">
+              <thead><tr>
+                <th>Время</th><th>Уровень</th><th>Источник</th><th>Событие</th><th>Значение</th>
+              </tr></thead>
+              <tbody id="eventBody"></tbody>
+            </table>
+          </div>
+          <footer class="table-foot">
+            <span class="mono" id="eventCount">0 записей</span>
+            <div class="pager" id="eventPager"></div>
+          </footer>
+        </article>
+      </div>
+
+      <!-- ── TAB: SETTINGS ── -->
+      <div class="panel" id="panel-settings">
+        <div class="row row-set">
+          <article class="card">
+            <header class="card-head"><h2>Пороги срабатывания алертов</h2></header>
+            <div id="thresholdsForm" class="form-grid"></div>
+            <button class="btn btn-primary" id="btnSaveThresholds">Сохранить пороги</button>
+          </article>
+          <article class="card">
+            <header class="card-head"><h2>Интерфейс и данные</h2></header>
+            <div class="settings-list">
+              <label class="switch-row"><span>Плотная таблица событий</span>
+                <input type="checkbox" id="setDense" /></label>
+              <label class="switch-row"><span>Звуковые уведомления об ERROR/CRIT</span>
+                <input type="checkbox" id="setSound" checked /></label>
+              <label class="switch-row"><span>Показывать сетку на графиках</span>
+                <input type="checkbox" id="setGrid" checked /></label>
+              <label class="range-row"><span>Скорость симуляции: <b class="mono" id="speedVal">1.0×</b></span>
+                <input type="range" id="setSpeed" min="0.25" max="4" step="0.25" value="1" /></label>
+              <label class="range-row"><span>Глубина истории (точек)</span>
+                <input type="range" id="setDepth" min="120" max="1200" step="120" value="600" /></label>
+            </div>
+            <hr/>
+            <button class="btn btn-danger" id="btnResetAll">Сбросить всё к заводским</button>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ══════════ TOASTS ══════════ -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- ══════════ MODAL ══════════ -->
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal card" role="dialog" aria-modal="true">
+      <header class="card-head"><h2 id="modalTitle">Подтверждение</h2>
+        <button class="modal-x" id="modalX" aria-label="Закрыть">✕</button></header>
+      <div class="modal-body" id="modalBody"></div>
+      <footer class="modal-foot">
+        <button class="btn btn-ghost" id="modalCancel">Отмена</button>
+        <button class="btn btn-primary" id="modalOk">Подтвердить</button>
+      </footer>
+    </div>
+  </div>
+
+  <footer class="site-foot mono">
+    СИНТЕКО Лаб · демо-стенд симуляции промышленных данных · всё генерируется локально в браузере, без сервера
+  </footer>
+
+  <script src="./js/utils.js"></script>
+  <script src="./js/simulation.js"></script>
+  <script src="./js/charts.js"></script>
+  <script src="./js/dashboard.js"></script>
+</body>
 </html>
