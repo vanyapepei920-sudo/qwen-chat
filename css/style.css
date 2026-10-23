@@ -341,3 +341,24 @@ canvas { width: 100%; display: block; border-radius: 8px; }
   background: #06101c; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; color: #9fe8c8; }
 .pub-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin: 0; }
 #modalLink { text-decoration: none; }
+
+/* ═══ Speedtest & GitHub Tools (nettools panel) ═══ */
+.st-card { flex: 1 1 420px; }
+.st-grid { display: grid; grid-template-columns: 260px 1fr; gap: 14px; align-items: center; margin-bottom: 10px; }
+.st-gauge-wrap canvas { width: 100%; height: auto; display: block; }
+.st-results { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.st-cell { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; text-align: center; }
+.st-cell small { display: block; font-size: 10px; letter-spacing: .08em; color: var(--muted); }
+.st-cell b { font-size: 17px; color: var(--text); }
+.st-cell.big b { font-size: 21px; color: var(--accent); }
+.gt-bar { display: grid; grid-template-columns: 210px 1fr auto; gap: 8px; margin-bottom: 8px; }
+.gt-token { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 10px; }
+.gt-results { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.gt-item { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font-size: 13px; line-height: 1.55; }
+.gt-item .btn-small { margin-left: 6px; }
+.input { background: var(--bg2); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; }
+.input:focus { outline: none; border-color: var(--accent); }
+textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
+.chk { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.btn-small { padding: 4px 9px; font-size: 11.5px; border-radius: 7px; }
+@media (max-width: 900px) { .st-grid { grid-template-columns: 1fr; } .gt-bar { grid-template-columns: 1fr; } }

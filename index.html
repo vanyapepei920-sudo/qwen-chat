@@ -11,6 +11,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./css/style.css" />
+  <style id="extraPublishStyles">
+    .pub-progress { height: 8px; border-radius: 6px; background: rgba(120,160,255,.14); margin: .8rem 0 .5rem; overflow: hidden; }
+    .pub-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #38e896, #6ee7ff); transition: width .3s ease; }
+    .pub-log { list-style: none; margin: 0; padding: .5rem .6rem; max-height: 150px; overflow-y: auto; background: #0a111f; border-radius: 10px; font-size: .72rem; color: #9fb4d8; }
+    .pub-log li { padding: .12rem 0; }
+    .modal label { display: block; margin: .55rem 0; font-size: .85rem; }
+    .modal input[type="password"], .modal input[type="text"] { width: 100%; margin-top: .3rem; padding: .55rem .7rem; border-radius: 10px; border: 1px solid rgba(120,160,255,.25); background: #0c1424; color: #e8ecf5; font: inherit; }
+    .modal .chk { display: flex; gap: .5rem; align-items: center; }
+  </style>
 </head>
 <body>
   <div class="bg-grid" aria-hidden="true"></div>
@@ -32,6 +41,7 @@
       <button class="tab active" role="tab" data-tab="overview">Обзор</button>
       <button class="tab" role="tab" data-tab="analytics">Аналитика</button>
       <button class="tab" role="tab" data-tab="events">Журнал событий <span class="badge" id="badgeEvents" hidden>0</span></button>
+      <button class="tab" role="tab" data-tab="nettools">🌐 Speedtest · GitHub</button>
       <button class="tab" role="tab" data-tab="settings">Настройки</button>
     </nav>
 
@@ -41,7 +51,8 @@
         <span class="pulse-dot"></span><span id="liveLabel">LIVE</span>
       </button>
       <button class="btn btn-primary" id="btnReport">Отчёт</button>
-      <button class="btn btn-gh" id="btnPublish" title="Опубликовать этот сайт на GitHub Pages">
+      <a class="btn btn-ghost" href="./studio/index.html" title="WebStudio — виртуальный сервер для создания сайтов">🛠 WebStudio</a>
+      <button class="btn btn-gh" id="btnPublish" title="Опубликовать этот сайт на GitHub Pages — нужен только API-ключ">
         <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-.99.08-2.07 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.08.16 1.87.08 2.07.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         Опубликовать на GitHub
       </button>
@@ -218,6 +229,76 @@
       </div>
 
       <!-- ── TAB: SETTINGS ── -->
+      <div class="panel" id="panel-nettools">
+        <div class="row">
+          <!-- ═══ SPEEDTEST ═══ -->
+          <article class="card st-card">
+            <header class="card-head"><h2>🌐 Speedtest — проверка скорости интернета</h2>
+              <button class="btn btn-primary" id="stRun">▶ Запустить тест</button></header>
+            <div class="st-grid">
+              <div class="st-gauge-wrap"><canvas id="stGauge" width="260" height="170"></canvas></div>
+              <div class="st-results">
+                <div class="st-cell"><small>PING</small><b class="mono" id="stPing">— мс</b></div>
+                <div class="st-cell"><small>JITTER</small><b class="mono" id="stJitter">— мс</b></div>
+                <div class="st-cell"><small>ПОТЕРИ</small><b class="mono" id="stLoss">— %</b></div>
+                <div class="st-cell big"><small>DOWNLOAD ↓</small><b class="mono" id="stDown">— Мбит/с</b></div>
+                <div class="st-cell big"><small>UPLOAD ↑</small><b class="mono" id="stUp">— Мбит/с</b></div>
+                <div class="st-cell"><small>ОЦЕНКА</small><b class="mono" id="stGrade">—</b></div>
+              </div>
+            </div>
+            <div class="pub-track"><div class="pub-fill" id="stProgFill" style="width:0%"></div></div>
+            <p class="hint mono" id="stPhase">Готов. Тест использует Cloudflare Speed edge и GitHub CDN (HTTP-замеры, как speed.cloudflare.com).</p>
+            <p class="hint mono">live: ↓ <span id="stDlLive">—</span> · ↑ <span id="stUlLive">—</span> · последний пинг: <span id="stPingLast">—</span></p>
+            <p class="hint" id="stIsp"></p>
+            <details open><summary class="hint">История замеров (последние 20)</summary><div id="stHistory"></div></details>
+          </article>
+
+          <!-- ═══ GITHUB TOOLS ═══ -->
+          <article class="card">
+            <header class="card-head"><h2>🐙 GitHub Tools — стороние функции GitHub</h2></header>
+            <div class="gt-bar">
+              <select id="gtKind" class="input">
+                <option value="search">Поиск репозиториев</option>
+                <option value="profile">Профиль пользователя</option>
+                <option value="release">Релизы репозитория</option>
+                <option value="issues-open">Issues (открытые)</option>
+                <option value="issues-closed">Issues (закрытые)</option>
+                <option value="tree">Дерево файлов репо</option>
+              </select>
+              <input id="gtQuery" class="input" placeholder="например: react  ·  @torvalds  ·  microsoft/vscode" />
+              <button class="btn btn-primary" id="gtGo">Выполнить</button>
+            </div>
+            <div class="gt-token">
+              <input id="gtToken" type="password" class="input" placeholder="API-ключ для звёзд / форков / gist / коммитов (необязательно)" autocomplete="off"/>
+              <button class="btn btn-ghost" id="gtTokenSave">💾 Проверить и сохранить ключ</button>
+            </div>
+            <div id="gtResults" class="gt-results"><p class="hint">Публичные операции работают без ключа. Для «In stars», «Fork», gist и записи коммитов ключ запросится автоматически.</p></div>
+
+            <details><summary class="hint">✍ Быстрый gist (нужен ключ со scope gist)</summary>
+              <div class="form-grid">
+                <input id="gtGistDesc" class="input" placeholder="описание" />
+                <input id="gtGistFile" class="input" placeholder="имя файла (snippet.js)" />
+                <label class="chk"><input id="gtGistPublic" type="checkbox" checked /> публичный</label>
+              </div>
+              <textarea id="gtGistCode" class="input mono" rows="4" placeholder="// код…"></textarea>
+              <button class="btn btn-small btn-primary" id="gtMakeGist">Создать gist</button>
+            </details>
+
+            <details><summary class="hint">📝 Коммит файла в любой свой репозиторий (Contents RW)</summary>
+              <div class="form-grid">
+                <input id="gtCommitRepo" class="input" placeholder="owner/repo" />
+                <input id="gtCommitBranch" class="input" placeholder="main" />
+                <input id="gtCommitFile" class="input" placeholder="docs/note.md" />
+                <input id="gtCommitMsg" class="input" placeholder="commit message" />
+                <label class="chk"><input id="gtCommitUpdate" type="checkbox" checked /> обновлять если существует</label>
+              </div>
+              <textarea id="gtCommitText" class="input mono" rows="3" placeholder="содержимое файла…"></textarea>
+              <button class="btn btn-small btn-primary" id="gtCommitBtn">Закоммитить →</button>
+            </details>
+          </article>
+        </div>
+      </div>
+
       <div class="panel" id="panel-settings">
         <div class="row row-set">
           <article class="card">
@@ -273,5 +354,6 @@
   <script src="./js/charts.js"></script>
   <script src="./js/dashboard.js"></script>
   <script src="./js/publish.js"></script>
+  <script src="./js/nettest.js"></script>
 </body>
 </html>
