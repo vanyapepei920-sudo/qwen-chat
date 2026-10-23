@@ -1,18 +1,18 @@
 /* ═══════════════════════════════════════════════════════════════
    publish.js — кнопка «Опубликовать на GitHub»
-   Публикует сайт из локального git-репозитория в публичный
-   репозиторий GitHub + включает GitHub Pages. Работает через
-   GitHub REST API (нужен Personal Access Token с scope repo).
-   Токен НЕ хранится: запрашивается при каждом запуске, живёт
-   только в памяти вкладки до закрытия модалки.
+   ТРЕБУЕТСЯ ТОЛЬКО API-КЛЮЧ:
+     • владелец (login) определяется автоматически из токена (GET /user);
+     • имя репозитория генерируется автоматически (можно переопределить);
+     • дальше всё само: создание репо → загрузка файлов сайта →
+       включение GitHub Pages → живая ссылка.
    ═══════════════════════════════════════════════════════════════ */
 (function () {
   "use strict";
 
   const $ = (s) => document.querySelector(s);
   const API = "https://api.github.com";
+  const LS_TOKEN = "gh_pub_token";
 
-  /* ---------- helpers ---------- */
   async function ghFetch(path, opts = {}, token) {
     const res = await fetch(API + path, {
       ...opts,
@@ -20,7 +20,7 @@
         Authorization: "Bearer " + token,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        ...(opts.headers || {}),
+        ...(opts.body ? { "Content-Type": "application/json" } : {}),
       },
     });
     if (!res.ok) {
@@ -33,22 +33,26 @@
     return res.status === 204 ? null : res.json();
   }
 
-  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-
-  function setProgress(steps, done) {
-    const bar = $("#pubBar");
-    if (bar) bar.style.width = Math.round((done / steps) * 100) + "%";
+  function b64(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
   }
 
-  /* ---------- file collection (two-stage, no page reload) ---------- */
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+  /* ---------- сбор файлов сайта ---------- */
   const SRC_FILES = [
     "index.html", "README.md", ".gitignore",
     "css/style.css",
     "js/utils.js", "js/simulation.js", "js/charts.js", "js/dashboard.js", "js/publish.js",
-    ".github/workflows/pages.yml",
+    "studio/index.html", "studio/css/studio.css",
+    "studio/js/store.js", "studio/js/zip.js", "studio/js/publish.js", "studio/js/studio.js",
+    "js/nettest.js",
   ];
 
-  // Stage 1: читаем текстовые файлы как <script type="text/plain"> блоки.
+  // Этап 1: готовые <script type="text/plain" id="src:path"> блоки в DOM
   function collectStage1() {
     const out = {};
     for (const f of SRC_FILES) {
@@ -58,248 +62,206 @@
     return out;
   }
 
-  // Собираем все исходники страницы. index.html сериализуем из DOM,
-  // предварительно удалив временные блоки-источники (иначе они
-  // переехали бы в опубликованную копию). Остальные файлы — из блоков,
-  // загруженных через fetch (для file:// это заблокирован, см. ошибку ниже).
-  async function gatherFiles() {
-    const holder = document.getElementById("pubSrcHolder");
-    const inline = collectStage1();
-    let indexHtml = null;
-    if (holder) holder.remove();
-    try {
-      indexHtml = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
-    } finally {
-      if (holder) document.body.appendChild(holder); // на всякий случай вернём
-    }
-    if (!indexHtml || !/<title>/i.test(indexHtml)) {
-      throw new Error("Не удалось сериализовать страницу.");
-    }
-    const out = { ...inline, "index.html": indexHtml };
-    const missing = SRC_FILES.filter((f) => !(f in out));
-    if (missing.length) {
-      throw new Error(
-        "Браузер запретил чтение файлов со страницы (протокол file://). " +
-        "Откройте сайт через локальный сервер, например: python3 -m http.server 8000 → http://localhost:8000"
-      );
+  // Этап 2: fetch (когда сайт открыт по http/https)
+  async function collectViaFetch() {
+    const out = {};
+    for (const f of SRC_FILES) {
+      try {
+        const r = await fetch("./" + f, { cache: "no-store" });
+        if (r.ok) out[f] = await r.text();
+      } catch (e) { /* файл опционален */ }
     }
     return out;
   }
 
-  /* ---------- upload pipeline ---------- */
-  async function publish(token, owner, repoName, files, uiCb) {
-    const total = 4 + Object.keys(files).length + 2;
-    let step = 0;
-
-    uiCb("Проверяю токен…");
-    const me = await ghFetch("/user", {}, token);
-    if (token.startsWith("ghp_") || token.startsWith("github_pat_")) {
-      // fine-grained токены не дают /user/scopes; classic — можно проверить
+  // Этап 3 (fallback для file://): сериализация текущего DOM + подгрузка <script src>/<link href>
+  async function collectFromDom() {
+    const root = document.documentElement;
+    const out = {};
+    const refs = [];
+    root.querySelectorAll("script[src], link[href]").forEach((n) => refs.push(n.getAttribute("src") || n.getAttribute("href")));
+    for (const r of refs) {
+      if (!r || /^(https?:|data:)/i.test(r)) continue;
+      try {
+        const res = await fetch("./" + r.replace(/^\.\//, ""), { cache: "no-store" });
+        if (res.ok) out[r.replace(/^\.\//, "")] = await res.text();
+      } catch (e) { /* ignore */ }
     }
-    step++; setProgress(total, step);
+    const clone = root.cloneNode(true);
+    clone.querySelectorAll("script[type='text/plain']").forEach((n) => n.remove());
+    out["index.html"] = "<!doctype html>\n" + clone.outerHTML;
+    return out;
+  }
 
-    uiCb(`Ищу репозиторий ${owner}/${repoName}…`);
-    let created = false;
+  async function collectFiles(onStep) {
+    let files = collectStage1();
+    if (Object.keys(files).length < 3) files = await collectViaFetch();
+    if (Object.keys(files).length < 3) files = await collectFromDom();
+    const list = Object.entries(files).map(([path, content]) => ({ path, content }));
+    if (!list.length) throw new Error("Не удалось собрать файлы сайта");
+    onStep("Файлов к публикации: " + list.length);
+    return list;
+  }
+
+  /* ---------- прогресс ---------- */
+  function setProgress(pct) {
+    const bar = $("#pubBar") || $("#stProgFill");
+    if (bar) bar.style.width = Math.round(pct) + "%";
+  }
+  function logLine(msg) {
+    const log = $("#pubLog");
+    if (!log) return;
+    const li = document.createElement("li");
+    li.textContent = msg;
+    log.appendChild(li);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  /* ---------- конвейер ---------- */
+  async function runPublish(token, repoNameInput) {
+    logLine("1/5 Проверка API-ключа…");
+    const me = await ghFetch("/user", {}, token);
+    if (!me || !me.login) throw new Error("Токен не распознан GitHub");
+    logLine("1/5 ✔ владелец определён автоматически: @" + me.login);
+
+    const repoName = (repoNameInput || "").trim() || "syntheco-console-" + Date.now().toString(36);
+    logLine("2/5 Репозиторий: " + repoName);
+
+    let repo;
     try {
-      await ghFetch(`/repos/${owner}/${repoName}`, {}, token);
+      repo = await ghFetch("/repos/" + me.login + "/" + repoName, {}, token);
+      logLine("2/5 ✔ репозиторий существует — обновляем файлы");
     } catch (e) {
       if (e.status === 404) {
-        uiCb("Создаю публичный репозиторий…");
-        await ghFetch("/user/repos", {
-          method: "POST",
-          body: JSON.stringify({ name: repoName, public: true, auto_init: false }),
-        }, token);
-        created = true;
-      } else throw e;
+        repo = await ghFetch("/user/repos", { method: "POST", body: JSON.stringify({ name: repoName, public: true, auto_init: false }) }, token);
+        logLine("2/5 ✔ создан публичный репозиторий");
+      } else if (e.status === 401) throw new Error("Ключ недействителен (401). Выпустите новый с правами Contents: Read and Write.");
+      else if (e.status === 403) throw new Error("Доступ запрещён (403). Проверьте права ключа.");
+      else throw e;
     }
-    step++; setProgress(total, step);
 
-    uiCb("Загружаю файлы (" + Object.keys(files).length + ")…");
-    for (const [path, content] of Object.entries(files)) {
-      const b64 = btoa(unescape(encodeURIComponent(content)));
+    const files = await collectFiles(logLine);
+    logLine("3/5 Загрузка " + files.length + " файлов…");
+    let i = 0;
+    for (const f of files) {
+      const enc = "/repos/" + me.login + "/" + repoName + "/contents/" + encodeURIComponent(f.path).replace(/%2F/g, "/");
       let sha = null;
-      try {
-        const info = await ghFetch(
-          `/repos/${owner}/${repoName}/contents/${encodeURIComponent(path)}?ref=main`, {}, token);
-        sha = info.sha;
-      } catch (e) { /* файл отсутствует */ }
-      await ghFetch(`/repos/${owner}/${repoName}/contents/${encodeURIComponent(path)}`, {
+      try { const cur = await ghFetch(enc, {}, token); sha = cur && cur.sha; } catch (e) { if (e.status !== 404) throw e; }
+      await ghFetch(enc, {
         method: "PUT",
-        body: JSON.stringify({
-          message: (sha ? "update" : "add") + " " + path + " via Синтеко Лаб",
-          content: b64, branch: "main", ...(sha ? { sha } : {}),
-        }),
+        body: JSON.stringify({ message: "publish: " + f.path, content: b64(f.content), ...(sha ? { sha } : {}) }),
       }, token);
-      step++; setProgress(total, step);
-      uiCb(`Файл готов: ${path}`);
+      i++; setProgress(10 + (i / files.length) * 60);
+      if (i % 3 === 0 || i === files.length) logLine("3/5 ✔ " + i + "/" + files.length + " — " + f.path);
     }
 
-    if (created) { await sleep(1500); } // даём репо инициализироваться
-
-    uiCb("Включаю GitHub Pages (branch main /)…");
+    logLine("4/5 Включение GitHub Pages…");
     try {
-      await ghFetch(`/repos/${owner}/${repoName}/pages`, {
-        method: "POST",
-        body: JSON.stringify({ source: { branch: "main", path: "/" } }),
-      }, token);
+      await ghFetch("/repos/" + me.login + "/" + repoName + "/pages", { method: "POST", body: JSON.stringify({ source: { branch: "main", path: "/" } }) }, token);
     } catch (e) {
-      if (e.status === 409) { // уже включены — обновляем
-        await ghFetch(`/repos/${owner}/${repoName}/pages`, {
-          method: "PUT", body: JSON.stringify({ source: { branch: "main", path: "/" } }),
-        }, token);
-      } else throw e;
+      if (e.status === 409) await ghFetch("/repos/" + me.login + "/" + repoName + "/pages", { method: "PUT", body: JSON.stringify({ source: { branch: "main", path: "/" } }) }, token);
+      else throw e;
     }
-    step++; setProgress(total, step);
+    logLine("4/5 ✔ Pages включены");
 
-    uiCb("Жду сборки Pages…");
-    let url = `https://${owner.toLowerCase()}.github.io/${repoName}/`;
-    for (let i = 0; i < 20; i++) {
-      await sleep(3000);
+    setProgress(80);
+    logLine("5/5 Проверка статуса Pages…");
+    let url = "https://" + me.login.toLowerCase() + ".github.io/" + repoName + "/";
+    for (let k = 0; k < 4; k++) {
       try {
-        const p = await ghFetch(`/repos/${owner}/${repoName}/pages`, {}, token);
-        if (p.status && p.status !== "built" && p.status !== "built_pending") continue;
-        if (p.status === "built") { url = p.url || url; break; }
-      } catch (e) { /* ещё нет билда */ }
-      if (i === 19) uiCb("Билд ещё идёт — ссылка появится через минуту.");
+        const st = await ghFetch("/repos/" + me.login + "/" + repoName + "/pages", {}, token);
+        if (st && st.status !== "building" && st.html_url) { url = st.html_url; break; }
+      } catch (e) { break; }
+      await sleep(2000);
     }
-    step++; setProgress(total, step);
-    return { url, repo: `https://github.com/${owner}/${repoName}` };
+    setProgress(100);
+    logLine("5/5 ✔ ГОТОВО! Сайт: " + url);
+    return { url, repoUrl: repo.html_url, owner: me.login, repoName };
   }
 
-  /* ---------- modal UI ---------- */
-  function buildModalHtml(prefill) {
-    return `
-      <p class="pub-note">Кнопка реально публикует этот сайт: читает все исходники страницы,
-      создаёт публичный репозиторий через GitHub&nbsp;API, загружает файлы и включает GitHub&nbsp;Pages.</p>
-      <label class="pub-label">GitHub Personal Access Token
-        <input class="inp mono" id="pubToken" type="password" autocomplete="off"
-               placeholder="ghp_… или github_pat_… (scope: repo + workflow)">
-      </label>
-      <div class="pub-row">
-        <label class="pub-label">Владелец (логин)
-          <input class="inp" id="pubOwner" value="${prefill.owner}" placeholder="ваш-логин"></label>
-        <label class="pub-label">Имя репозитория
-          <input class="inp mono" id="pubRepo" value="${prefill.repo}" placeholder="syntheco-lab"></label>
-      </div>
-      <div class="pub-track"><div class="pub-fill" id="pubBar" style="width:0%"></div></div>
-      <pre class="pub-log mono" id="pubLog">Готово к публикации. Токен не сохраняется — он живёт только до закрытия окна.</pre>
-      <p class="pub-hint">Как получить токен: github.com → Settings → Developer settings →
-      Personal access tokens → Tokens (classic) → Generate new token → чекбокс <b>repo</b> (+ <b>workflow</b>).
-      После публикации отзовите токен.</p>`;
-  }
-
-  function openPublishDialog() {
-    const backdrop = $("#modalBackdrop");
-    const body = $("#modalBody");
-    const title = $("#modalTitle");
-    const okBtn = $("#modalOk");
-    const cancelBtn = $("#modalCancel");
-
-    title.textContent = "Публикация на GitHub";
-    const prefill = {
-      owner: localStorage.getItem("pub.owner") || "",
-      repo: localStorage.getItem("pub.repo") || "syntheco-lab",
-    };
-    body.innerHTML = buildModalHtml(prefill);
-    backdrop.hidden = false;
-
-    const log = (m) => { const el = $("#pubLog"); if (el) el.textContent += "\n› " + m; };
-    okBtn.textContent = "▶ Опубликовать";
-    cancelBtn.textContent = "Закрыть";
-    okBtn.disabled = false;
-    const linkBtn = $("#modalLink");
-    if (linkBtn) linkBtn.hidden = true;
-
-    const restore = () => {
-      okBtn.textContent = "▶ Опубликовать";
-      okBtn.disabled = false;
-      bindOk();
-      cancelBtn.onclick = close;
-    };
-    const close = () => {
-      backdrop.hidden = true; body.innerHTML = "";
-      if (linkBtn) linkBtn.hidden = true;
-      // снять вешалки, чтобы utils.modal() работал как раньше
-      okBtn.onclick = null; cancelBtn.onclick = null; $("#modalX").onclick = null;
-    };
-    cancelBtn.onclick = close;
-    $("#modalX").onclick = close;
-
-    const doPublish = async () => {
-      const token = ($("#pubToken").value || "").trim();
-      const owner = ($("#pubOwner").value || "").trim();
-      const repo = ($("#pubRepo").value || "").trim();
-      if (!token || !owner || !repo) { log("❌ Заполните токен, владельца и имя репозитория."); return; }
-      if (!/^[a-zA-Z0-9_.-]+$/.test(repo)) { log("❌ Некорректное имя репозитория."); return; }
-      localStorage.setItem("pub.owner", owner);
-      localStorage.setItem("pub.repo", repo);
-
-      okBtn.disabled = true; okBtn.textContent = "Публикую…";
-      $("#pubBar").style.width = "0%";
-      try {
-        const files = await gatherFiles();
-        if (!files["index.html"]) throw new Error("Не удалось прочитать index.html страницы.");
-        log(`Прочитано файлов: ${Object.keys(files).length}.`);
-        const res = await publish(token, owner, repo, files, log);
-        log("✅ ГОТОВО! Сайт: " + res.url);
-        log("   Репозиторий: " + res.repo);
-        okBtn.textContent = "✓ Готово";
-        okBtn.disabled = false;
-        okBtn.onclick = close;
-        if (linkBtn) { linkBtn.hidden = false; linkBtn.href = res.url; }
-        cancelBtn.textContent = "Закрыть";
-      } catch (e) {
-        console.error(e);
-        const hint = e.status === 401 ? " — проверьте, что токен живой и имеет scope repo."
-          : e.status === 403 ? " — недостаточно прав (или лимит API)."
-          : e.status === 422 ? " — репозиторий существует, но пуст/конфликт имён." : "";
-        log("❌ Ошибка: " + (e.message || e) + hint);
-        restore();
-      }
-    };
-    const bindOk = () => { okBtn.onclick = doPublish; };
-    bindOk();
-  }
-
-  /* ---------- inject self-source + all sources as hidden blocks ---------- */
-  // publish.js тоже читается через fetch — в опубликованном index.html
-  // содержимое файлов лежит во временных скрытых блоках <script type="text/plain">.
-  function injectSourceBlocks() {
-    const old = document.getElementById("pubSrcHolder");
-    if (old) old.remove();
-    const holder = document.createElement("div");
-    holder.id = "pubSrcHolder";
-    holder.hidden = true;
-    document.body.appendChild(holder);
-    const add = (f, text) => {
-      const s = document.createElement("script");
-      s.type = "text/plain";
-      s.id = "src:" + f;
-      s.textContent = text;
-      holder.appendChild(s);
-    };
-    const staticFiles = ["README.md", ".gitignore", "css/style.css",
-      "js/utils.js", "js/simulation.js", "js/charts.js", "js/dashboard.js",
-      "js/publish.js", ".github/workflows/pages.yml"];
-    return Promise.allSettled(staticFiles.map(async (f) => {
-      const r = await fetch("./" + f, { cache: "no-store" });
-      if (!r.ok) throw new Error(f + ": HTTP " + r.status);
-      add(f, await r.text());
-    }));
-  }
-
-  /* ---------- wire up ---------- */
-  function init() {
+  /* ---------- автозапуск при наличии сохранённого ключа ---------- */
+  let autoRunning = false;
+  async function autoPublish() {
+    if (autoRunning) return;
+    autoRunning = true;
+    const token = localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token") || "";
+    if (!token) { autoRunning = false; return; }
     const btn = $("#btnPublish");
-    if (!btn) return;
-    btn.classList.remove("is-dead");
+    if (btn) btn.textContent = "⏳ Публикация…";
+    // ключ уже сохранён — публикуем вообще без модалки
+    logLine("Автопубликация: используется сохранённый API-ключ…");
+    try {
+      const res = await runPublish(token, "");
+      toast("Опубликовано: " + res.url, "ok", 9000);
+      const link = $("#modalLink");
+      if (link) { link.href = res.url; link.hidden = false; }
+      if (btn) btn.textContent = "✔ Опубликовано";
+    } catch (e) {
+      console.error(e);
+      logLine("✖ " + e.message + " — нажмите кнопку снова, чтобы ввести новый ключ.");
+      toast("Автопубликация не удалась: " + e.message, "error", 7000);
+      if (btn) btn.textContent = "Опубликовать на GitHub";
+      localStorage.removeItem(LS_TOKEN); // ключ битый — просим новый вручную
+    } finally { autoRunning = false; }
+  }
+
+  /* ---------- модалка: ТОЛЬКО поле API-ключа ---------- */
+  function openModal(prefill) {
+    const saved = prefill != null ? prefill : (localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token") || "");
+    modal(`
+      <h3 style="margin-top:0">Публикация на GitHub Pages</h3>
+      <p class="hint">Нужен <b>только API-ключ</b>. Владелец, имя репозитория и Pages определяются и настраиваются автоматически. Ничего больше вводить не нужно.</p>
+      <label>API-ключ (GitHub token,Fine-grained с Contents:RW + Administration:RW или classic scope repo)
+        <input id="pubToken" type="password" placeholder="ghp_… или github_pat_…" value="${String(saved).replace(/"/g, "&quot;")}" autocomplete="off" autofocus />
+      </label>
+      <label class="chk"><input id="pubRemember" type="checkbox" ${saved ? "checked" : ""}/> запомнить ключ — следующие публикации будут автоматическими</label>
+      <div class="pub-track"><div class="pub-fill" id="pubBar"></div></div>
+      <ul class="pub-log mono" id="pubLog"></ul>`,
+      "▶ Опубликовать").then(async (ok) => {
+        if (!ok) return; // пользователь закрыл окно — тихо выходим
+        const token = ($("#pubToken").value || "").trim();
+        if (!token) { toast("Введите API-ключ", "warn"); return; }
+        if ($("#pubRemember").checked) { localStorage.setItem(LS_TOKEN, token); localStorage.setItem("gh_tools_token", token); }
+        else localStorage.removeItem(LS_TOKEN);
+        const btn = $("#btnPublish");
+        if (btn) btn.textContent = "⏳ Публикация…";
+        try {
+          const res = await runPublish(token, "");
+          toast("Опубликовано: " + res.url, "ok", 9000);
+          const link = $("#modalLink");
+          if (link) { link.href = res.url; link.hidden = false; }
+          if (btn) btn.textContent = "✔ Опубликовано";
+        } catch (e) {
+          console.error(e);
+          logLine("✖ ОШИБКА: " + e.message);
+          toast("Ошибка публикации: " + e.message, "error", 7000);
+          if (btn) btn.textContent = "Опубликовать на GitHub";
+        }
+      });
+  }
+
+  /* ---------- привязка кнопки ---------- */
+  function bind() {
+    const btn = $("#btnPublish");
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = "1";
     btn.addEventListener("click", () => {
-      // гарантируем наличие блоков-источников (idempotent)
-      injectSourceBlocks().finally(openPublishDialog);
+      const token = localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token") || "";
+      // если ключ уже есть — публикуем сразу, без единого вопроса
+      if (token && !autoRunning) { autoPublish(); return; }
+      openModal();
     });
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else init();
+  function init() {
+    bind();
+    // автопубликация при заходе: если браузер уже знает ключ — просто обновляем сайт
+    if ((localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token")) && sessionStorage.getItem("gh_pub_autorun") !== "1") {
+      sessionStorage.setItem("gh_pub_autorun", "1");
+      setTimeout(autoPublish, 1500);
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
 })();
