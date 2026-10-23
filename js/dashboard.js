@@ -50,7 +50,6 @@ var DASH = (() => {
     if (bars) bars.innerHTML = [1, 2, 3, 4, 5].map(i =>
       `<span class="bar ${st.signal >= i * 20 ? "on" : ""}"></span>`).join("");
     const sv = $("#signalVal"); if (sv) sv.textContent = st.signal + "%";
-    if (ui.tab === "overview") renderKpis();
   }
 
   /* ─────────── NETMON wiring ─────────── */
@@ -82,7 +81,6 @@ var DASH = (() => {
       ui.tab = t.dataset.tab;
       $$(".tab").forEach(x => x.classList.toggle("active", x === t));
       $$(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + ui.tab));
-      if (ui.tab === "overview") renderKpis();
       if (ui.tab === "events") renderEvents();
     });
   }
@@ -101,23 +99,6 @@ var DASH = (() => {
     });
     const st = $("#btnStudio");
     if (st) st.addEventListener("click", () => { location.href = "studio/index.html"; });
-  }
-
-  /* ─────────── overview KPIs (реальные данные) ─────────── */
-  function kpiCard(sel, val, subSel, sub) {
-    const el = $(sel); if (el) el.textContent = val;
-    const s = $(subSel); if (s) s.textContent = sub;
-  }
-  function renderKpis() {
-    const st = NETMON.state, h = NETMON.history();
-    const okPing = st.lastPing.find(p => p.ok);
-    kpiCard("#kpiDown", st.curDown ? NETMON.fmtMbps(st.curDown) : "—", "#kpiDownSub", "приём, последний замер");
-    kpiCard("#kpiUp", st.curUp ? NETMON.fmtMbps(st.curUp) : "—", "#kpiUpSub", "отдача, последний замер");
-    kpiCard("#kpiPing", (okPing ? okPing.ms : "—") + " мс", "#kpiPingSub", "задержка до CDN");
-    kpiCard("#kpiSignal", st.signal + "%", "#kpiSignalSub", "качество сигнала");
-    const avgD = h.length ? h.reduce((a, x) => a + x.down, 0) / h.length : 0;
-    kpiCard("#kpiAvg", avgD ? NETMON.fmtMbps(avgD) : "—", "#kpiAvgSub", "средний приём по истории");
-    kpiCard("#kpiEvents", String(events.length), "#kpiEventsSub", "событий соединения");
   }
 
   /* ─────────── events journal (реальные события) ─────────── */

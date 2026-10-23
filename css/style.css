@@ -378,3 +378,18 @@ textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
 .lvl-error{background:#3d1420;color:#ff7d92}.lvl-crit{background:#5c0f22;color:#ff5470}
 .kpi em{display:block;font-style:normal;font-size:11px;opacity:.6;margin-top:3px}
 @media(max-width:900px){.nm-grid{grid-template-columns:1fr}.nm-cells{grid-template-columns:repeat(2,1fr)}}
+
+/* ═══ WEBSEARCH: поиск в интернете + интернет-функции ═══ */
+.ws-keys{margin:8px 0}
+.ws-results{min-height:120px}
+.ws-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.ws-item{padding:10px 12px;border:1px solid var(--line,#233);border-radius:8px;background:rgba(255,255,255,.02)}
+.ws-title{color:#6fb7ff;font-weight:600;text-decoration:none;font-size:14px}
+.ws-title:hover{text-decoration:underline}
+.ws-snippet{color:#c9d4e2;font-size:13px;margin-top:4px;line-height:1.45}
+.ws-url{color:#6a7b92;font-size:11px;margin-top:4px;word-break:break-all}
+.ws-quick{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ws-tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:10px}
+.ws-tools .wt{justify-content:flex-start;text-align:left;font-size:12.5px}
+.ws-tools .wt-active{border-color:#3ee0a4;color:#3ee0a4}
+.ws-out{white-space:pre-wrap;word-break:break-word;background:#0b1220;border:1px solid var(--line,#233);border-radius:8px;padding:12px;font-size:12.5px;line-height:1.5;min-height:120px;max-height:340px;overflow:auto;color:#cfe3f5}
