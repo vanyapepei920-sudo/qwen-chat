@@ -74,19 +74,33 @@
     return out;
   }
 
-  // Этап 3 (fallback для file://): сериализация текущего DOM
-  function collectFromDom() {
-    const doc = document.documentElement.cloneNode(true);
-    doc.querySelectorAll("script[type='text/plain']").forEach((n) => n.remove());
-    return { "index.html": "<!doctype html>\n" + doc.outerHTML };
+  // Этап 3 (fallback для file://): сериализация текущего DOM + подгрузка <script src>/<link href>
+  async function collectFromDom() {
+    const root = document.documentElement;
+    const out = {};
+    const refs = [];
+    root.querySelectorAll("script[src], link[href]").forEach((n) => refs.push(n.getAttribute("src") || n.getAttribute("href")));
+    for (const r of refs) {
+      if (!r || /^(https?:|data:)/i.test(r)) continue;
+      try {
+        const res = await fetch("./" + r.replace(/^\.\//, ""), { cache: "no-store" });
+        if (res.ok) out[r.replace(/^\.\//, "")] = await res.text();
+      } catch (e) { /* ignore */ }
+    }
+    const clone = root.cloneNode(true);
+    clone.querySelectorAll("script[type='text/plain']").forEach((n) => n.remove());
+    out["index.html"] = "<!doctype html>\n" + clone.outerHTML;
+    return out;
   }
 
   async function collectFiles(onStep) {
     let files = collectStage1();
     if (Object.keys(files).length < 3) files = await collectViaFetch();
-    if (Object.keys(files).length < 3) files = collectFromDom();
-    onStep("Файлов к публикации: " + Object.keys(files).length);
-    return Object.entries(files).map(([path, content]) => ({ path, content }));
+    if (Object.keys(files).length < 3) files = await collectFromDom();
+    const list = Object.entries(files).map(([path, content]) => ({ path, content }));
+    if (!list.length) throw new Error("Не удалось собрать файлы сайта");
+    onStep("Файлов к публикации: " + list.length);
+    return list;
   }
 
   /* ---------- прогресс ---------- */
@@ -151,9 +165,9 @@
     logLine("4/5 ✔ Pages включены");
 
     setProgress(80);
-    logLine("5/5 Ожидание сборки (до 40 c)…");
+    logLine("5/5 Проверка статуса Pages…");
     let url = "https://" + me.login.toLowerCase() + ".github.io/" + repoName + "/";
-    for (let k = 0; k < 20; k++) {
+    for (let k = 0; k < 4; k++) {
       try {
         const st = await ghFetch("/repos/" + me.login + "/" + repoName + "/pages", {}, token);
         if (st && st.status !== "building" && st.html_url) { url = st.html_url; break; }
@@ -165,45 +179,89 @@
     return { url, repoUrl: repo.html_url, owner: me.login, repoName };
   }
 
+  /* ---------- автозапуск при наличии сохранённого ключа ---------- */
+  let autoRunning = false;
+  async function autoPublish() {
+    if (autoRunning) return;
+    autoRunning = true;
+    const token = localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token") || "";
+    if (!token) { autoRunning = false; return; }
+    const btn = $("#btnPublish");
+    if (btn) btn.textContent = "⏳ Публикация…";
+    // ключ уже сохранён — публикуем вообще без модалки
+    logLine("Автопубликация: используется сохранённый API-ключ…");
+    try {
+      const res = await runPublish(token, "");
+      toast("Опубликовано: " + res.url, "ok", 9000);
+      const link = $("#modalLink");
+      if (link) { link.href = res.url; link.hidden = false; }
+      if (btn) btn.textContent = "✔ Опубликовано";
+    } catch (e) {
+      console.error(e);
+      logLine("✖ " + e.message + " — нажмите кнопку снова, чтобы ввести новый ключ.");
+      toast("Автопубликация не удалась: " + e.message, "error", 7000);
+      if (btn) btn.textContent = "Опубликовать на GitHub";
+      localStorage.removeItem(LS_TOKEN); // ключ битый — просим новый вручную
+    } finally { autoRunning = false; }
+  }
+
+  /* ---------- модалка: ТОЛЬКО поле API-ключа ---------- */
+  function openModal(prefill) {
+    const saved = prefill != null ? prefill : (localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token") || "");
+    modal(`
+      <h3 style="margin-top:0">Публикация на GitHub Pages</h3>
+      <p class="hint">Нужен <b>только API-ключ</b>. Владелец, имя репозитория и Pages определяются и настраиваются автоматически. Ничего больше вводить не нужно.</p>
+      <label>API-ключ (GitHub token,Fine-grained с Contents:RW + Administration:RW или classic scope repo)
+        <input id="pubToken" type="password" placeholder="ghp_… или github_pat_…" value="${String(saved).replace(/"/g, "&quot;")}" autocomplete="off" autofocus />
+      </label>
+      <label class="chk"><input id="pubRemember" type="checkbox" ${saved ? "checked" : ""}/> запомнить ключ — следующие публикации будут автоматическими</label>
+      <div class="pub-track"><div class="pub-fill" id="pubBar"></div></div>
+      <ul class="pub-log mono" id="pubLog"></ul>`,
+      "▶ Опубликовать").then(async (ok) => {
+        if (!ok) return; // пользователь закрыл окно — тихо выходим
+        const token = ($("#pubToken").value || "").trim();
+        if (!token) { toast("Введите API-ключ", "warn"); return; }
+        if ($("#pubRemember").checked) { localStorage.setItem(LS_TOKEN, token); localStorage.setItem("gh_tools_token", token); }
+        else localStorage.removeItem(LS_TOKEN);
+        const btn = $("#btnPublish");
+        if (btn) btn.textContent = "⏳ Публикация…";
+        try {
+          const res = await runPublish(token, "");
+          toast("Опубликовано: " + res.url, "ok", 9000);
+          const link = $("#modalLink");
+          if (link) { link.href = res.url; link.hidden = false; }
+          if (btn) btn.textContent = "✔ Опубликовано";
+        } catch (e) {
+          console.error(e);
+          logLine("✖ ОШИБКА: " + e.message);
+          toast("Ошибка публикации: " + e.message, "error", 7000);
+          if (btn) btn.textContent = "Опубликовать на GitHub";
+        }
+      });
+  }
+
   /* ---------- привязка кнопки ---------- */
   function bind() {
     const btn = $("#btnPublish");
     if (!btn || btn.dataset.bound) return;
     btn.dataset.bound = "1";
     btn.addEventListener("click", () => {
-      const saved = localStorage.getItem(LS_TOKEN) || "";
-      const sharedT = localStorage.getItem("gh_tools_token") || "";
-      modal(`
-        <h3 style="margin-top:0">Публикация на GitHub Pages</h3>
-        <p class="hint">Нужен <b>только API-ключ</b> — владелец и репозиторий определяются автоматически.</p>
-        <label>API-ключ (токен GitHub, права: Contents RW + Administration RW)
-          <input id="pubToken" type="password" placeholder="ghp_… или github_pat_…" value="${(saved || sharedT).replace(/"/g, "&quot;")}" autocomplete="off" />
-        </label>
-        <details><summary class="hint">необязательно: своё имя репозитория</summary>
-          <input id="pubRepoName" placeholder="авто: syntheco-console-&lt;дата&gt;" /></details>
-        <label class="chk"><input id="pubRemember" type="checkbox" ${saved ? "checked" : ""}/> запомнить ключ в этом браузере</label>
-        <div class="pub-track"><div class="pub-fill" id="pubBar"></div></div>
-        <ul class="pub-log mono" id="pubLog"></ul>`,
-        "▶ Опубликовать").then(async (ok) => {
-          if (!ok) return;
-          const token = ($("#pubToken").value || "").trim();
-          if (!token) { toast("Введите API-ключ", "warn"); return; }
-          if ($("#pubRemember").checked) localStorage.setItem(LS_TOKEN, token);
-          else localStorage.removeItem(LS_TOKEN);
-          try {
-            const res = await runPublish(token, $("#pubRepoName").value);
-            toast("Опубликовано: " + res.url, "ok", 8000);
-            const link = $("#modalLink");
-            if (link) { link.href = res.url; link.hidden = false; }
-          } catch (e) {
-            console.error(e);
-            logLine("✖ ОШИБКА: " + e.message);
-            toast("Ошибка публикации: " + e.message, "error", 7000);
-          }
-        });
+      const token = localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token") || "";
+      // если ключ уже есть — публикуем сразу, без единого вопроса
+      if (token && !autoRunning) { autoPublish(); return; }
+      openModal();
     });
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
-  else bind();
+  function init() {
+    bind();
+    // автопубликация при заходе: если браузер уже знает ключ — просто обновляем сайт
+    if ((localStorage.getItem(LS_TOKEN) || localStorage.getItem("gh_tools_token")) && sessionStorage.getItem("gh_pub_autorun") !== "1") {
+      sessionStorage.setItem("gh_pub_autorun", "1");
+      setTimeout(autoPublish, 1500);
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
 })();

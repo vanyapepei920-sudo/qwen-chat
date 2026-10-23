@@ -113,14 +113,11 @@
 
     let savedToken = localStorage.getItem(Publisher.LS_TOKEN) || localStorage.getItem('gh_pub_token') || localStorage.getItem('gh_tools_token') || '';
     const ok = await modal('Опубликовать на GitHub', `
-      <p class="hint">Репозиторий и владелец определяются <b>автоматически</b> по ключу. Нужен только API-ключ
-      (<a href="https://github.com/settings/tokens" target="_blank" rel="noopener">Fine-grained с Contents:RW или classic scope <code>repo</code></a>).</p>
-      <label>API-ключ (токен GitHub)
-        <input type="password" id="pubToken" class="input" placeholder="ghp_… / github_pat_…" value="${esc(savedToken)}" autocomplete="off" />
+      <p class="hint">Нужен <b>только API-ключ</b>: владелец, имя репозитория (по названию проекта «${esc(proj.name)}») и Pages определяются автоматически.</p>
+      <label>API-ключ (GitHub token,Fine-grained с Contents:RW + Administration:RW или classic scope repo)
+        <input type="password" id="pubToken" class="input" placeholder="ghp_… / github_pat_…" value="${esc(savedToken)}" autocomplete="off" autofocus />
       </label>
-      <label class="pub-adv"><input type="checkbox" id="pubRemember" ${savedToken ? 'checked' : ''}/> запомнить ключ в этом браузере</label>
-      <details><summary class="hint">необязательно: переименовать репозиторий</summary>
-        <input id="pubRepo" class="input" placeholder="${esc(Publisher.slugify(proj.name))}" /></details>
+      <label class="pub-adv"><input type="checkbox" id="pubRemember" ${savedToken ? 'checked' : ''}/> запомнить ключ — следующие публикации автоматические</label>
       <div class="pub-progress" id="pubProg"><i></i></div>
       <ul class="pub-log mono" id="pubLog"></ul>`, '▶ Опубликовать');
     if (!ok) return;
@@ -128,7 +125,7 @@
     const tokenEl = $id('pubToken');
     const token = (tokenEl && tokenEl.value || '').trim();
     if (!token) { toast('Введите API-ключ', 'error'); return publishProject(pid); }
-    if ($id('pubRemember') && $id('pubRemember').checked) localStorage.setItem(Publisher.LS_TOKEN, token);
+    if ($id('pubRemember') && $id('pubRemember').checked) { localStorage.setItem(Publisher.LS_TOKEN, token); localStorage.setItem('gh_pub_token', token); }
     else localStorage.removeItem(Publisher.LS_TOKEN);
 
     const log = $id('pubLog');
@@ -138,12 +135,12 @@
       if (!log) return;
       const li = document.createElement('li'); li.textContent = msg; log.appendChild(li);
       log.scrollTop = log.scrollHeight;
-      const m = msg.match(/(\d+)\/(\d+)/); if (m) fill.style.width = (m[1] / m[2] * 100) + '%';
-      else if (/Готово/.test(msg)) fill.style.width = '100%';
+      const m = msg.match(/^(\d)\/5/); if (m && fill) fill.style.width = (+m[1] / 5 * 100) + '%';
+      else if (/✔ Готово|ГОТОВО/.test(msg) && fill) fill.style.width = '100%';
     };
 
     try {
-      const res = await Publisher.publish(proj, { token, repoName: ($id('pubRepo') || {}).value }, stepCb);
+      const res = await Publisher.publish(proj, { token }, stepCb);
       toast('Опубликовано! ' + res.url, 'ok');
       beep(1200, 0.15);
       const link = $id('modalLink');
