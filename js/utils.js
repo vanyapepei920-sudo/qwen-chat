@@ -20,6 +20,7 @@ const rnd = (min, max) => min + RNG() * (max - min);
 const rndInt = (min, max) => Math.floor(rnd(min, max + 1));
 const pick = (arr) => arr[Math.floor(RNG() * arr.length)];
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const lerp = (a, b, t) => a + (b - a) * t;
 
 /** Gaussian noise via Box–Muller */

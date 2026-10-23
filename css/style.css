@@ -362,3 +362,18 @@ textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
 .chk { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
 .btn-small { padding: 4px 9px; font-size: 11.5px; border-radius: 7px; }
 @media (max-width: 900px) { .st-grid { grid-template-columns: 1fr; } .gt-bar { grid-template-columns: 1fr; } }
+
+/* ═══ NetConsole v4: live-мониторинг интернета (реальные замеры) ═══ */
+.conn-pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 20px;
+  border: 1px solid var(--line); background: var(--bg2); font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--ok); }
+.conn-pill.off { color: var(--err); border-color: rgba(255,84,112,.5); }
+.live-speed { font-size: 13.5px; margin: 4px 0; color: var(--muted); }
+.live-speed b { font-size: 19px; }
+.live-speed.dl b { color: var(--accent); }
+.live-speed.ul b { color: var(--ok); }
+.live-speed small { font-size: 10.5px; letter-spacing: .05em; }
+.signal-bar { transition: height .4s ease, background .4s ease; }
+.studio-frame-card iframe { width: 100%; height: min(78vh, 860px); border: 1px solid var(--line); border-radius: 12px; background: #0b1120; margin-top: 8px; }
+.dim { color: var(--muted); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 8px 0; }
+details summary { cursor: pointer; }
