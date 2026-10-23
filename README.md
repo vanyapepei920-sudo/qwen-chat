@@ -22,3 +22,5 @@ npm run dev      # http://localhost:5173
 npm run build    # прод-сборка в dist/
 npm run preview  # предпросмотр сборки
 ```
+
+проверка публикации
