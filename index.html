@@ -38,10 +38,10 @@
     </div>
 
     <nav class="tabs" role="tablist" id="tabs">
-      <button class="tab active" role="tab" data-tab="overview">Обзор</button>
-      <button class="tab" role="tab" data-tab="analytics">Аналитика</button>
       <button class="tab" role="tab" data-tab="events">Журнал событий <span class="badge" id="badgeEvents" hidden>0</span></button>
+      <button class="tab active" role="tab" data-tab="netmon">📡 Интернет LIVE</button>
       <button class="tab" role="tab" data-tab="nettools">🌐 Speedtest · GitHub</button>
+      <button class="tab" role="tab" data-tab="websearch">🔎 Поиск в интернете</button>
       <button class="tab" role="tab" data-tab="settings">Настройки</button>
     </nav>
 
@@ -63,8 +63,13 @@
     <!-- ══════════ SIDEBAR ══════════ -->
     <aside class="sidebar">
       <div class="side-block">
-        <h3>Цеха</h3>
-        <ul class="shop-list" id="shopList"></ul>
+        <h3>Сеть сейчас</h3>
+        <ul class="shop-list" id="netSideList">
+          <li><span>Приём ↓</span><b class="mono" id="sideDown">—</b></li>
+          <li><span>Отдача ↑</span><b class="mono" id="sideUp">—</b></li>
+          <li><span>Пинг</span><b class="mono" id="sidePing">—</b></li>
+          <li><span>Потери</span><b class="mono" id="sideLoss">—</b></li>
+        </ul>
       </div>
       <div class="side-block">
         <h3>Качество сигнала</h3>
@@ -74,122 +79,21 @@
       <div class="side-block">
         <h3>Быстрые действия</h3>
         <div class="quick-actions">
-          <button class="btn btn-ghost" data-cmd="calibrate">Калибровка датчиков</button>
-          <button class="btn btn-ghost" data-cmd="snapshot">Снимок телеметрии</button>
-          <button class="btn btn-ghost" data-cmd="reset-counters">Сброс счётчиков</button>
-          <button class="btn btn-danger" data-cmd="emergency">Аварийный стоп ✕</button>
+          <button class="btn btn-ghost" id="qaSnapshot">Снимок сети</button>
+          <button class="btn btn-ghost" id="qaTestNow">Полный speedtest</button>
+          <button class="btn btn-ghost" id="qaStudio">Открыть WebStudio</button>
         </div>
       </div>
       <div class="side-block uptime">
         <h3>Аптайм сессии</h3>
         <div class="mono big" id="uptimeVal">00:00:00</div>
         <div class="progress"><i id="slaBar" style="width:0%"></i></div>
-        <p class="side-note">SLA-цель: <b>99.2%</b> · факт: <b id="slaVal">—</b></p>
+        <p class="side-note">Статус канала: <b id="slaVal">—</b></p>
       </div>
     </aside>
 
     <!-- ══════════ CONTENT ══════════ -->
     <section class="content" id="content">
-
-      <!-- ── TAB: OVERVIEW ── -->
-      <div class="panel active" id="panel-overview">
-        <div class="kpis" id="kpiRow"><!-- KPI-карточки рендерятся JS --></div>
-
-        <div class="row row-main">
-          <article class="card chart-card">
-            <header class="card-head">
-              <h2>Телеметрия линии
-                <select id="metricSel" class="select">
-                  <option value="throughput">Производительность, ед/мин</option>
-                  <option value="temperature">Температура, °C</option>
-                  <option value="vibration">Вибрация, мм/с</option>
-                  <option value="power">Потребление, кВт</option>
-                </select>
-              </h2>
-              <div class="chart-tools">
-                <button class="chip active" data-window="60">1м</button>
-                <button class="chip" data-window="300">5м</button>
-                <button class="chip" data-window="900">15м</button>
-              </div>
-            </header>
-            <canvas id="lineChart" height="300"></canvas>
-            <footer class="chart-foot mono">
-              <span>min <b id="statMin">—</b></span>
-              <span>avg <b id="statAvg">—</b></span>
-              <span>max <b id="statMax">—</b></span>
-              <span>σ <b id="statStd">—</b></span>
-              <span>trend <b id="statTrend">—</b></span>
-            </footer>
-          </article>
-
-          <article class="card gauge-card">
-            <header class="card-head"><h2>Загрузка мощностей</h2></header>
-            <canvas id="gauge" width="260" height="210"></canvas>
-            <div class="legend" id="gaugeLegend"></div>
-          </article>
-        </div>
-
-        <div class="row row-second">
-          <article class="card">
-            <header class="card-head"><h2>Распределение брака по типам</h2></header>
-            <canvas id="donut" width="420" height="240"></canvas>
-          </article>
-
-          <article class="card alerts-card">
-            <header class="card-head">
-              <h2>Активные алерты</h2>
-              <button class="btn btn-small" id="btnAckAll">Принять все</button>
-            </header>
-            <ul class="alert-list" id="alertList"></ul>
-          </article>
-
-          <article class="card shops-mini">
-            <header class="card-head"><h2>Статус цехов</h2></header>
-            <div id="shopBars"></div>
-          </article>
-        </div>
-      </div>
-
-      <!-- ── TAB: ANALYTICS ── -->
-      <div class="panel" id="panel-analytics">
-        <div class="row row-an1">
-          <article class="card">
-            <header class="card-head"><h2>OEE по сменам (последние 12)</h2></header>
-            <canvas id="oeeChart" height="280"></canvas>
-            <p class="hint">OEE = Доступность × Производительность × Качество. Порог цели — 85%.</p>
-          </article>
-          <article class="card">
-            <header class="card-head"><h2>Матрица рисков</h2></header>
-            <div class="risk-matrix" id="riskMatrix"></div>
-            <p class="hint">Вероятность инцидента × тяжесть последствий. Наведите на ячейку.</p>
-          </article>
-        </div>
-        <div class="row row-an2">
-          <article class="card wide">
-            <header class="card-head">
-              <h2>Экономический эффект</h2>
-              <div class="seg" id="calcSeg">
-                <button class="chip active" data-mode="oee">Рост OEE</button>
-                <button class="chip" data-mode="defect">Снижение брака</button>
-                <button class="chip" data-mode="energy">Экономия энергии</button>
-              </div>
-            </header>
-            <div class="calc-grid">
-              <label>Текущие показатели (подставляются из телеметрии):
-                <div class="calc-readouts mono" id="calcReadouts"></div>
-              </label>
-              <label><span id="sliderLabel">Прирост OEE</span>: <b class="mono" id="sliderVal">5%</b>
-                <input type="range" id="calcSlider" min="1" max="30" value="5" />
-              </label>
-              <div class="calc-result">
-                <div class="calc-num mono" id="calcNum">0 ₽</div>
-                <div class="calc-sub">ожидаемый эффект за год</div>
-                <canvas id="calcChart" height="120"></canvas>
-              </div>
-            </div>
-          </article>
-        </div>
-      </div>
 
       <!-- ── TAB: EVENTS ── -->
       <div class="panel" id="panel-events">
@@ -197,38 +101,82 @@
           <header class="card-head">
             <h2>Журнал событий</h2>
             <div class="event-tools">
-              <input type="search" id="eventSearch" placeholder="Поиск по описанию…" />
-              <select id="eventLevel" class="select">
+              <input type="search" id="evSearch" placeholder="Поиск по описанию…" />
+              <select id="evLevel" class="select">
                 <option value="all">Все уровни</option>
                 <option value="info">INFO</option>
                 <option value="warn">WARN</option>
                 <option value="error">ERROR</option>
                 <option value="crit">CRIT</option>
               </select>
-              <select id="eventSort" class="select">
+              <select id="evSort" class="select">
                 <option value="time-desc">Сначала новые</option>
                 <option value="time-asc">Сначала старые</option>
                 <option value="level">По уровню</option>
               </select>
-              <button class="btn btn-small" id="btnExportCsv">CSV ↓</button>
+              <button class="btn btn-small" id="evExport">CSV ↓</button><button class="btn btn-small" id="evPrev">←</button><button class="btn btn-small" id="evNext">→</button>
             </div>
           </header>
           <div class="table-wrap">
             <table class="table" id="eventTable">
               <thead><tr>
-                <th>Время</th><th>Уровень</th><th>Источник</th><th>Событие</th><th>Значение</th>
+                <th>Время</th><th>Уровень</th><th>Событие</th>
               </tr></thead>
-              <tbody id="eventBody"></tbody>
+              <tbody></tbody>
             </table>
           </div>
           <footer class="table-foot">
-            <span class="mono" id="eventCount">0 записей</span>
+            <span class="mono" id="evFoot">0 событий</span>
             <div class="pager" id="eventPager"></div>
           </footer>
         </article>
       </div>
 
-      <!-- ── TAB: SETTINGS ── -->
+      <!-- ── TAB: INTERNET LIVE MONITOR ── -->
+      <div class="panel active" id="panel-netmon">
+        <div class="row">
+          <article class="card st-card">
+            <header class="card-head"><h2>📡 Живой монитор интернета — сигнал, отдача и приём в реальном времени</h2>
+              <button class="btn btn-primary" id="nmToggle">▶ Запустить мониторинг</button></header>
+            <div class="nm-grid">
+              <div class="nm-gauge-wrap">
+                <canvas id="nmGauge" width="240" height="160"></canvas>
+                <div class="mono nm-sig-val" id="nmSigVal">—%</div>
+                <small>качество сигнала (пинг + потери)</small>
+              </div>
+              <div class="nm-cells">
+                <div class="st-cell"><small>PING ↓ ПРИЁМ</small><b class="mono" id="nmPing">— мс</b></div>
+                <div class="st-cell"><small>JITTER</small><b class="mono" id="nmJitter">— мс</b></div>
+                <div class="st-cell"><small>ПОТЕРИ</small><b class="mono" id="nmLoss">— %</b></div>
+                <div class="st-cell big"><small>DOWNLOAD ↓ ПРИНИМАЕТ</small><b class="mono" id="nmDown">— Мбит/с</b>
+                  <em class="mono" id="nmDownLive"></em></div>
+                <div class="st-cell big"><small>UPLOAD ↑ ОТДАЁТ</small><b class="mono" id="nmUp">— Мбит/с</b>
+                  <em class="mono" id="nmUpLive"></em></div>
+                <div class="st-cell"><small>СТАТУС</small><b class="mono" id="nmOnline" style="color:#3ee0a4">● В сети</b></div>
+              </div>
+            </div>
+            <div class="nm-hosts-row" id="nmHosts"></div>
+            <div class="nm-vol">
+              <span>Принято за цикл: <b class="mono" id="nmDownTotal">0 МБ</b></span>
+              <span>Отдано за цикл: <b class="mono" id="nmUpTotal">0 МБ</b></span>
+              <span>IP / провайдер: <b class="mono" id="nmIp">н/д</b> <small id="nmGeo"></small></span>
+            </div>
+            <canvas id="nmSignalSpark" width="700" height="70" style="width:100%"></canvas>
+          </article>
+
+          <article class="card st-card">
+            <header class="card-head"><h2>История замеров (каждые ~30 с)</h2></header>
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>Время</th><th>Пинг</th><th>Jitter</th><th>↓ Приём</th><th>↑ Отдача</th><th>Сигнал</th></tr></thead>
+                <tbody id="nmHistBody"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <!-- ── TAB: NETTOOLS ── -->
       <div class="panel" id="panel-nettools">
         <div class="row">
           <!-- ═══ SPEEDTEST ═══ -->
@@ -299,13 +247,57 @@
         </div>
       </div>
 
+      <!-- ── TAB: WEB SEARCH ── -->
+      <div class="panel" id="panel-websearch">
+        <div class="row">
+          <article class="card st-card">
+            <header class="card-head"><h2>🔎 Поиск в интернете — Google API, DuckDuckGo, Wikipedia</h2></header>
+            <div class="gt-bar">
+              <select id="wsEngine" class="input">
+                <option value="ddg">DuckDuckGo (без ключа)</option>
+                <option value="google">Google Custom Search (нужен ключ)</option>
+                <option value="wiki">Wikipedia (без ключа)</option>
+                <option value="gh">GitHub репозитории (без ключа)</option>
+                <option value="hn">Hacker News (без ключа)</option>
+              </select>
+              <input id="wsQuery" class="input" placeholder="поисковый запрос…" />
+              <button class="btn btn-primary" id="wsGo">Искать</button>
+            </div>
+            <details class="ws-keys"><summary class="hint">🔑 Ключи Google Custom Search API</summary>
+              <div class="form-grid">
+                <input id="wsGKey" type="password" class="input" placeholder="API key (console.cloud.google.com → Custom Search JSON API)" autocomplete="off"/>
+                <input id="wsGCx" class="input" placeholder="Search Engine ID (cx), пример: a1b2c3..." />
+                <button class="btn btn-ghost" id="wsKeysSave">💾 Сохранить ключи</button>
+              </div>
+              <p class="hint">Бесплатно 100 запросов/день. Создайте CSE на programmablesearchengine.google.com и включите Custom Search JSON API.</p>
+            </details>
+            <div id="wsResults" class="gt-results ws-results"><p class="hint">Введите запрос — результаты появятся здесь. Быстрые ссылки:</p>
+              <div class="ws-quick" id="wsQuick"></div>
+            </div>
+            <p class="hint mono" id="wsMeta"></p>
+          </article>
+
+          <article class="card">
+            <header class="card-head"><h2>🧰 Интернет-функции</h2></header>
+            <div class="ws-tools" id="wsTools">
+              <button class="btn btn-ghost wt" data-tool="dns">🌍 DNS: myip / ipinfo.io</button>
+              <button class="btn btn-ghost wt" data-tool="geo">📍 Геолокация по IP (ipapi.co)</button>
+              <button class="btn btn-ghost wt" data-tool="isp">🏢 Мой провайдер и ASN</button>
+              <button class="btn btn-ghost wt" data-tool="headers">📦 HTTP-заголовки ответа example.com</button>
+              <button class="btn btn-ghost wt" data-tool="latency">⚡ Задержка до 6 серверов мира</button>
+              <button class="btn btn-ghost wt" data-tool="mtu">📐 Проверка MTU / размера полезной нагрузки</button>
+              <button class="btn btn-ghost wt" data-tool="connectivity">🔌 Тест доступности хоста</button>
+              <button class="btn btn-ghost wt" data-tool="httpstatus">🚦 Проверка кода ответа URL</button>
+              <button class="btn btn-ghost wt" data-tool="throughput">🚚 Пропускная способность (стрим 5 МБ)</button>
+              <button class="btn btn-ghost wt" data-tool="jitter2">📈 Джиттер 20 замеров подряд</button>
+            </div>
+            <pre class="mono ws-out" id="wsOut">Выберите функцию слева ↑ — результат появится здесь.</pre>
+          </article>
+        </div>
+      </div>
+
       <div class="panel" id="panel-settings">
         <div class="row row-set">
-          <article class="card">
-            <header class="card-head"><h2>Пороги срабатывания алертов</h2></header>
-            <div id="thresholdsForm" class="form-grid"></div>
-            <button class="btn btn-primary" id="btnSaveThresholds">Сохранить пороги</button>
-          </article>
           <article class="card">
             <header class="card-head"><h2>Интерфейс и данные</h2></header>
             <div class="settings-list">
@@ -315,13 +307,9 @@
                 <input type="checkbox" id="setSound" checked /></label>
               <label class="switch-row"><span>Показывать сетку на графиках</span>
                 <input type="checkbox" id="setGrid" checked /></label>
-              <label class="range-row"><span>Скорость симуляции: <b class="mono" id="speedVal">1.0×</b></span>
-                <input type="range" id="setSpeed" min="0.25" max="4" step="0.25" value="1" /></label>
-              <label class="range-row"><span>Глубина истории (точек)</span>
-                <input type="range" id="setDepth" min="120" max="1200" step="120" value="600" /></label>
             </div>
             <hr/>
-            <button class="btn btn-danger" id="btnResetAll">Сбросить всё к заводским</button>
+            <button class="btn btn-danger" id="btnWipe">Очистить историю замеров и журнал</button>
           </article>
         </div>
       </div>
@@ -346,14 +334,15 @@
   </div>
 
   <footer class="site-foot mono">
-    СИНТЕКО Лаб · демо-стенд симуляции промышленных данных · всё генерируется локально в браузере, без сервера
+    СИНТЕКО Лаб · живой мониторинг интернета и консоль разработки · замеры выполняются напрямую из браузера, без сервера
   </footer>
 
   <script src="./js/utils.js"></script>
-  <script src="./js/simulation.js"></script>
   <script src="./js/charts.js"></script>
   <script src="./js/dashboard.js"></script>
   <script src="./js/publish.js"></script>
   <script src="./js/nettest.js"></script>
+  <script src="./js/netmonitor.js"></script>
+  <script src="./js/websearch.js"></script>
 </body>
 </html>

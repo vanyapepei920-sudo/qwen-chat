@@ -363,17 +363,33 @@ textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
 .btn-small { padding: 4px 9px; font-size: 11.5px; border-radius: 7px; }
 @media (max-width: 900px) { .st-grid { grid-template-columns: 1fr; } .gt-bar { grid-template-columns: 1fr; } }
 
-/* ═══ NetConsole v4: live-мониторинг интернета (реальные замеры) ═══ */
-.conn-pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 20px;
-  border: 1px solid var(--line); background: var(--bg2); font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--ok); }
-.conn-pill.off { color: var(--err); border-color: rgba(255,84,112,.5); }
-.live-speed { font-size: 13.5px; margin: 4px 0; color: var(--muted); }
-.live-speed b { font-size: 19px; }
-.live-speed.dl b { color: var(--accent); }
-.live-speed.ul b { color: var(--ok); }
-.live-speed small { font-size: 10.5px; letter-spacing: .05em; }
-.signal-bar { transition: height .4s ease, background .4s ease; }
-.studio-frame-card iframe { width: 100%; height: min(78vh, 860px); border: 1px solid var(--line); border-radius: 12px; background: #0b1120; margin-top: 8px; }
-.dim { color: var(--muted); }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 8px 0; }
-details summary { cursor: pointer; }
+/* ═══ Internet Live Monitor (netmon) ═══ */
+.nm-grid{display:grid;grid-template-columns:260px 1fr;gap:18px;align-items:start}
+.nm-gauge-wrap{text-align:center}
+.nm-sig-val{font-size:26px;color:#3ee0a4;margin-top:-6px}
+.nm-cells{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.st-cell em{display:block;font-style:normal;font-size:11px;color:#7ddba8;margin-top:2px}
+.nm-hosts-row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.nm-host{flex:1;min-width:160px;display:flex;justify-content:space-between;padding:8px 12px;border:1px solid var(--line,#1e2b3a);border-radius:8px;font-size:13px}
+.nm-host.ok b{color:#3ee0a4}.nm-host.bad b{color:#ff5470}
+.nm-vol{display:flex;gap:22px;flex-wrap:wrap;font-size:13px;opacity:.85;margin-bottom:10px}
+.lvl{padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700}
+.lvl-info{background:#12303f;color:#5ec8ff}.lvl-warn{background:#3d2f10;color:#ffc95e}
+.lvl-error{background:#3d1420;color:#ff7d92}.lvl-crit{background:#5c0f22;color:#ff5470}
+.kpi em{display:block;font-style:normal;font-size:11px;opacity:.6;margin-top:3px}
+@media(max-width:900px){.nm-grid{grid-template-columns:1fr}.nm-cells{grid-template-columns:repeat(2,1fr)}}
+
+/* ═══ WEBSEARCH: поиск в интернете + интернет-функции ═══ */
+.ws-keys{margin:8px 0}
+.ws-results{min-height:120px}
+.ws-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.ws-item{padding:10px 12px;border:1px solid var(--line,#233);border-radius:8px;background:rgba(255,255,255,.02)}
+.ws-title{color:#6fb7ff;font-weight:600;text-decoration:none;font-size:14px}
+.ws-title:hover{text-decoration:underline}
+.ws-snippet{color:#c9d4e2;font-size:13px;margin-top:4px;line-height:1.45}
+.ws-url{color:#6a7b92;font-size:11px;margin-top:4px;word-break:break-all}
+.ws-quick{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ws-tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:10px}
+.ws-tools .wt{justify-content:flex-start;text-align:left;font-size:12.5px}
+.ws-tools .wt-active{border-color:#3ee0a4;color:#3ee0a4}
+.ws-out{white-space:pre-wrap;word-break:break-word;background:#0b1220;border:1px solid var(--line,#233);border-radius:8px;padding:12px;font-size:12.5px;line-height:1.5;min-height:120px;max-height:340px;overflow:auto;color:#cfe3f5}

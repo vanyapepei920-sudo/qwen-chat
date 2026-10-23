@@ -46,7 +46,7 @@
   const SRC_FILES = [
     "index.html", "README.md", ".gitignore",
     "css/style.css",
-    "js/utils.js", "js/simulation.js", "js/charts.js", "js/dashboard.js", "js/publish.js",
+    "js/utils.js", "js/charts.js", "js/dashboard.js", "js/publish.js", "js/netmonitor.js", "js/websearch.js",
     "studio/index.html", "studio/css/studio.css",
     "studio/js/store.js", "studio/js/zip.js", "studio/js/publish.js", "studio/js/studio.js",
     "js/nettest.js",
