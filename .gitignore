@@ -1,3 +1,9 @@
-node_modules/
-*.zip
-.tmp/
+.env
+venv/
+__pycache__/
+*.pyc
+instance/
+logs/
+cache/
+data/
+.DS_Store

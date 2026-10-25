@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}403 — NetPulse{% endblock %}
+{% block content %}
+<div style="min-height:100vh;display:grid;place-items:center;padding:24px">
+  <div class="glass card" style="max-width:420px;text-align:center;padding:40px">
+    <div style="font-family:var(--mono);font-size:64px;font-weight:700;background:linear-gradient(92deg,#8b7bff,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent">403</div>
+    <h2 style="margin:10px 0 8px">Доступ запрещён</h2>
+    <p style="color:var(--muted);font-size:14px;line-height:1.6">У вас нет прав для просмотра этой страницы.</p>
+    <a href="/" class="btn primary" style="margin-top:20px;text-decoration:none">На главную</a>
+  </div>
+</div>
+{% endblock %}
+
+{% extends "base.html" %}
+{% block title %}404 — NetPulse{% endblock %}
+{% block content %}
+<div style="min-height:100vh;display:grid;place-items:center;padding:24px">
+  <div class="glass card" style="max-width:420px;text-align:center;padding:40px">
+    <div style="font-family:var(--mono);font-size:64px;font-weight:700;background:linear-gradient(92deg,#8b7bff,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent">404</div>
+    <h2 style="margin:10px 0 8px">Страница не найдена</h2>
+    <p style="color:var(--muted);font-size:14px;line-height:1.6">Такой страницы не существует или она была перемещена.</p>
+    <a href="/" class="btn primary" style="margin-top:20px;text-decoration:none">На главную</a>
+  </div>
+</div>
+{% endblock %}
+
+{% extends "base.html" %}
+{% block title %}500 — NetPulse{% endblock %}
+{% block content %}
+<div style="min-height:100vh;display:grid;place-items:center;padding:24px">
+  <div class="glass card" style="max-width:420px;text-align:center;padding:40px">
+    <div style="font-family:var(--mono);font-size:64px;font-weight:700;background:linear-gradient(92deg,#ff5f7e,#ffbe4d);-webkit-background-clip:text;background-clip:text;color:transparent">500</div>
+    <h2 style="margin:10px 0 8px">Внутренняя ошибка сервера</h2>
+    <p style="color:var(--muted);font-size:14px;line-height:1.6">Подробности — в <code style="font-family:var(--mono)">logs/server.log</code>.</p>
+    <a href="/" class="btn primary" style="margin-top:20px;text-decoration:none">На главную</a>
+  </div>
+</div>
+{% endblock %}

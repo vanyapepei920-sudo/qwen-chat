@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Регистрация — NetPulse{% endblock %}
+{% block content %}
+<section class="auth-page">
+  <canvas id="mesh"></canvas>
+  <div class="auth-card glass">
+    <div class="auth-head">
+      <div class="brand-mark big"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M2 12h4l2.5-7 4 14L15 12h7" stroke="#06101c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <h1>Создать аккаунт</h1>
+      <p>Регистрация через Google — мы запомним ваш аккаунт для быстрого входа</p>
+    </div>
+    <ul class="reg-perks">
+      <li>✓ История измерений на сервере</li>
+      <li>✓ Синхронизация настроек</li>
+      <li>✓ Быстрый повторный вход</li>
+    </ul>
+    <div id="gbtn"></div>
+    <div id="gAlert"></div>
+    <p class="switch">Уже есть аккаунт? <a href="{{ url_for('login') }}">Войти</a></p>
+  </div>
+</section>
+{% endblock %}
