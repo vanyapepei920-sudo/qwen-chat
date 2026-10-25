@@ -59,6 +59,9 @@
         </select>
       </form>
       <button class="btn btn-ghost nl-alarm-btn" id="nlAlarmBtn" hidden title="Качество связи хуже порогов — открыть Сеть-лабораторию" onclick="document.querySelector('[data-tab=&quot;netlab&quot;]').click()">⚠ связь</button>
+      <div class="user-chip" id="userChip" title="Вы вошли через Google">
+        <img id="ucAvatar" alt="" src="" hidden /><span id="ucName">…</span><a href="/logout" id="ucOut" title="Выйти">⎋</a>
+      </div>
       <div class="clock mono" id="clock">--:--:--</div>
       <button class="btn btn-live" id="btnLive" title="Пауза / запуск потока данных">
         <span class="pulse-dot"></span><span id="liveLabel">LIVE</span>
@@ -368,7 +371,7 @@
       <div class="panel" id="panel-netlab">
         <div class="row">
           <article class="card st-card">
-            <header class="card-head"><h2>🧪 Сеть-лаборатория — 12 тестов и параметров</h2>
+            <header class="card-head"><h2>🧪 Сеть-лаборатория — 24 теста и параметров</h2>
               <span class="hint mono" id="nlHint">все тесты работают без установки и ключей</span></header>
             <div class="ws-tools nl-tools" id="nlTools">
               <button class="btn btn-ghost wt" data-tool="speedtest">🚀 Быстрый speedtest (30 с)</button>
@@ -383,6 +386,18 @@
               <button class="btn btn-ghost wt" data-tool="uplatency">⏱ Latency под upload-нагрузкой</button>
               <button class="btn btn-ghost wt" data-tool="proxy">🕵️ Детект VPN / прокси / дата-центра</button>
               <button class="btn btn-ghost wt" data-tool="uptime">🟢 Uptime-монитор сайта (фоновый)</button>
+              <button class="btn btn-ghost wt v4b" data-tool="ports">🔌 Сканер TCP-портов</button>
+              <button class="btn btn-ghost wt v4b" data-tool="cidr">🧮 CIDR-калькулятор подсетей</button>
+              <button class="btn btn-ghost wt v4b" data-tool="emailchk">✉️ Проверка email + MX</button>
+              <button class="btn btn-ghost wt v4b" data-tool="bgpq">🛰 BGP / ASN по IP</button>
+              <button class="btn btn-ghost wt v4b" data-tool="rblchk">🚫 RBL: IP в спам-листах</button>
+              <button class="btn btn-ghost wt v4b" data-tool="dnssecapi">🛡 DNSSEC домена</button>
+              <button class="btn btn-ghost wt v4b" data-tool="dane">🔗 DANE / TLSA записи</button>
+              <button class="btn btn-ghost wt v4b" data-tool="qosapi">🎮 QoS: игры / VoIP / стрим</button>
+              <button class="btn btn-ghost wt v4b" data-tool="tlsbench">🤝 TLS-бенчмарк сайтов</button>
+              <button class="btn btn-ghost wt v4b" data-tool="nattype">📶 Оценка типа NAT</button>
+              <button class="btn btn-ghost wt v4b" data-tool="health">🌍 Здоровье интернета</button>
+              <button class="btn btn-ghost wt v4b" data-tool="hchart">📜 График истории замеров</button>
             </div>
             <pre class="mono ws-out nl-out" id="nlOut">Выберите тест ↑ — результат появится здесь.</pre>
           </article>

@@ -27,7 +27,8 @@
 Откроется http://localhost:5000 — потребуется войти через Google.
 
 Настройки читаются из .env (собственный мини-парсер на базе os.environ, без python-dotenv).
-Без настроенного Google OAuth включается DEMO-режим (кнопка «Демо-вход»).
+Вход через Google ОБЯЗАТЕЛЕН: без сессии сайт отдаёт страницу входа.
+DEMO-вход отключён по умолчанию; для локальной разработки включите ALLOW_DEMO_LOGIN=1 в .env.
 Google OAuth реализован вручную на urllib (authlib/OAuth2-клиент не требуется).
 """
 
@@ -198,6 +199,9 @@ DOWNLOAD_TEST_MB = int(os.getenv("DOWNLOAD_TEST_MB", "25"))  # размер те
 HISTORY_FILE = os.getenv("HISTORY_FILE", "results.json")
 ALLOWED_EMAILS = [e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()]
 
+# Вход через Google ОБЯЗАТЕЛЕН: без настроенных ключей сайт не пускает внутрь.
+# Демо-вход возможен только если явно включить ALLOW_DEMO_LOGIN=1 в .env (для локальной разработки).
+ALLOW_DEMO_LOGIN = os.getenv("ALLOW_DEMO_LOGIN", "0") == "1"
 DEMO_MODE = not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
 app = Flask(__name__, static_folder=None)
@@ -263,8 +267,14 @@ def login_required_json(fn):
 
 @app.route("/login")
 def login():
-    if DEMO_MODE:
+    if DEMO_MODE and ALLOW_DEMO_LOGIN:
         return redirect(url_for("demo_login"))
+    if DEMO_MODE:
+        # ключи не настроены — показать страницу с инструкцией, куда вставить API-ключи
+        return render_template_string(
+            LOGIN_PAGE, error=None, login_url=url_for("login"), demo=ALLOW_DEMO_LOGIN,
+            setup_hint="GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET не заданы. "
+                       "Вставьте их в файл .env (строки GOOGLE_CLIENT_ID=... и GOOGLE_CLIENT_SECRET=...) и перезапустите сервер.")
     redirect_uri = url_for("auth_callback", _external=True)
     state = secrets.token_urlsafe(16)
     session["oauth_state"] = state
@@ -282,8 +292,8 @@ def login():
 
 @app.route("/login/demo")
 def demo_login():
-    """Вход без Google — только для локальной разработки (DEMO-режим)."""
-    if not DEMO_MODE:
+    """Вход без Google — ТОЛЬКО если в .env явно включён ALLOW_DEMO_LOGIN=1."""
+    if not (DEMO_MODE and ALLOW_DEMO_LOGIN):
         return redirect(url_for("login"))
     session.permanent = True
     session["user"] = {
@@ -298,15 +308,16 @@ def demo_login():
 @app.route("/oauth2/callback")
 def auth_callback():
     if DEMO_MODE:
-        return redirect(url_for("demo_login"))
+        return render_template_string(LOGIN_PAGE, error="Google OAuth не настроен — вход через Google невозможен.",
+                                      login_url=url_for("login"), demo=ALLOW_DEMO_LOGIN, setup_hint=None), 400
     if request.args.get("error"):
         return render_template_string(LOGIN_PAGE, error=f"Google вернул ошибку: {request.args.get('error')}",
-                                      login_url=url_for("login"), demo=False), 400
+                                      login_url=url_for("login"), demo=False, setup_hint=None), 400
     code = request.args.get("code", "")
     state = request.args.get("state", "")
     if not code or state != session.pop("oauth_state", None):
         return render_template_string(LOGIN_PAGE, error="Некорректный OAuth-ответ (state/code)",
-                                      login_url=url_for("login"), demo=False), 400
+                                      login_url=url_for("login"), demo=False, setup_hint=None), 400
     # обмен authorization_code на токены — прямой TLS-запрос к Google (stdlib urllib)
     try:
         tok = requests.post(GOOGLE_TOKEN_ENDPOINT, data={
@@ -318,10 +329,10 @@ def auth_callback():
         }, timeout=10).json()
     except Exception as e:
         return render_template_string(LOGIN_PAGE, error=f"Ошибка обмена кода: {e}",
-                                      login_url=url_for("login"), demo=False), 502
+                                      login_url=url_for("login"), demo=False, setup_hint=None), 502
     if "access_token" not in tok:
         return render_template_string(LOGIN_PAGE, error=f"Google: {tok.get('error_description', 'no token')}",
-                                      login_url=url_for("login"), demo=False), 400
+                                      login_url=url_for("login"), demo=False, setup_hint=None), 400
     # профиль — из id_token (получен напрямую от Google по TLS) либо с /userinfo
     info = {}
     if tok.get("id_token"):
@@ -340,7 +351,7 @@ def auth_callback():
     if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
         session.clear()
         return render_template_string(LOGIN_PAGE, error=f"Email {email} не в списке разрешённых (ALLOWED_EMAILS)",
-                                      login_url=url_for("login"), demo=False), 403
+                                      login_url=url_for("login"), demo=False, setup_hint=None), 403
     session.permanent = True
     session["user"] = {
         "name": info.get("name", email),
@@ -371,17 +382,23 @@ def api_me():
 def index():
     u = current_user()
     if not u:
-        return render_template_string(LOGIN_PAGE, error=None, login_url=url_for("login"), demo=DEMO_MODE)
+        # Вход через Google строго обязателен — внутрь сайта без сессии не пускаем
+        return render_template_string(LOGIN_PAGE, error=None, login_url=url_for("login"),
+                                      demo=(DEMO_MODE and ALLOW_DEMO_LOGIN), setup_hint=None), 401
     return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "index.html")
 
 
 @app.route("/css/<path:fn>")
 def css(fn):
+    if not current_user():
+        return redirect(url_for("index"))
     return send_from_directory("css", fn)
 
 
 @app.route("/js/<path:fn>")
 def js(fn):
+    if not current_user():
+        return redirect(url_for("index"))
     return send_from_directory("js", fn)
 
 
@@ -1472,6 +1489,408 @@ def api_useragent():
     return jsonify(raw=ua, browser=browser, version=version, os=os_, engine=engine, mobile="Mobi" in ua)
 
 
+# ═══════════════════ НОВЫЕ ИНТЕРНЕТ-ФУНКЦИИ v4 (20 штук) ═══════════════════
+
+def _arg(name, default=None):
+    return request.args.get(name, default)
+
+
+@app.route("/api/ports")
+@login_required_json
+def api_ports():
+    """Проверка доступности TCP-портов на хосте из сервера (connect_expires)."""
+    host = (_arg("host", "example.com")).strip()
+    ports_raw = _arg("ports", "21,22,25,53,80,110,143,443,465,993,995,3389,8080")
+    try:
+        ports = [int(p) for p in re.findall(r"\d+", ports_raw)[:16]]
+    except ValueError:
+        return jsonify(error="некорректный список портов"), 400
+    results = []
+    for p in ports:
+        t0 = time.perf_counter()
+        try:
+            s = socket.create_connection((host, p), timeout=2.5)
+            s.close()
+            results.append({"port": p, "open": True, "ms": round((time.perf_counter() - t0) * 1000)})
+        except Exception:
+            results.append({"port": p, "open": False, "ms": round((time.perf_counter() - t0) * 1000)})
+    return jsonify(host=host, checked=len(ports), open=[r["port"] for r in results if r["open"]], results=results)
+
+
+@app.route("/api/cidr")
+@login_required_json
+def api_cidr():
+    """Калькулятор подсетей CIDR без внешних библиотек (stdlib ipaddress)."""
+    import ipaddress
+    cidr = _arg("cidr", "")
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except Exception as e:
+        return jsonify(error=f"некорректная CIDR: {e}"), 400
+    info = {"network": str(net.network_address), "prefixlen": net.prefixlen, "netmask": str(net.netmask),
+            "hosts_total": net.num_addresses if net.prefixlen < 31 else (2 if net.prefixlen == 31 else 1),
+            "usable": max(net.num_addresses - 2, 0) if net.version == 4 and net.prefixlen < 31 else net.num_addresses,
+            "first_host": str(net[0]) if net.num_addresses > 1 else str(net.network_address),
+            "last_host": str(net[-1]) if net.num_addresses > 1 else str(net.network_address),
+            "broadcast": str(net.broadcast_address) if net.version == 4 else None,
+            "wildcard": str(int(net.hostmask)) if net.version == 4 else None,
+            "reverse_dns": f"{net.network_address.reverse_pointer}" if hasattr(net.network_address, 'reverse_pointer') else None,
+            "ip_version": net.version}
+    return jsonify(info)
+
+
+@app.route("/api/email-check")
+@login_required_json
+def api_email_check():
+    """Проверка email: синтаксис + MX-запись домена (реальная доставка возможна?)."""
+    email = (_arg("email", "")).strip().lower()
+    m = re.match(r"^([a-z0-9._%+-]+)@([a-z0-9.-]+\.[a-z]{2,})$", email)
+    if not m:
+        return jsonify(email=email, valid=False, reason="некорректный синтаксис")
+    domain = m.group(2)
+    mx = []
+    try:
+        d = requests.get(f"https://dns.google/resolve?name={urllib.parse.quote(domain)}&type=MX",
+                         headers={"Accept": "application/dns-json"}, timeout=8).json()
+        mx = sorted({a["data"].split()[-1].rstrip(".") for a in d.get("Answer", []) if a.get("type") == 15})
+    except Exception:
+        pass
+    free = domain in {"gmail.com", "yandex.ru", "mail.ru", "outlook.com", "hotmail.com", "icloud.com", "yahoo.com", "bk.ru", "list.ru", "inbox.ru"}
+    return jsonify(email=email, local=m.group(1), domain=domain, valid=True, mx=mx[:5],
+                   deliverable=bool(mx), free_mail=free, role_account=m.group(1) in {"admin", "info", "support", "root", "postmaster"})
+
+
+@app.route("/api/ping-sweep")
+@login_required_json
+def api_ping_sweep():
+    """Пинг локальной подсети (сканирование живых хостов) — по образцу /24 от IP клиента."""
+    base = _arg("base") or (request.headers.get("X-Forwarded-For", request.remote_addr or "127.0.0.1").split(",")[0].strip())
+    octets = base.split(".")
+    if len(octets) != 4:
+        return jsonify(error="нужен IPv4 вида a.b.c.d"), 400
+    subnet = ".".join(octets[:3])
+    hosts = [f"{subnet}.{i}" for i in range(1, 25)]
+    alive = []
+    for h in hosts:
+        t0 = time.perf_counter()
+        try:
+            s = socket.create_connection((h, 53), timeout=0.35)
+            s.close()
+            alive.append({"host": h, "ms": round((time.perf_counter() - t0) * 1000, 1)})
+        except Exception:
+            pass
+    return jsonify(subnet=subnet + ".0/24", scanned=len(hosts), alive=alive, note="проверка TCP:53 connect (ICMP из Python без root недоступен)")
+
+
+@app.route("/api/subnet-info")
+@login_required_json
+def api_subnet_info():
+    """Информация о вашей сети: IP, приватность, reverse-DNS, класс."""
+    import ipaddress
+    ip = _arg("ip") or (request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip())
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return jsonify(error="некорректный IP"), 400
+    ptr = None
+    try:
+        ptr = socket.gethostbyaddr(str(addr))[0]
+    except Exception:
+        pass
+    return jsonify(ip=str(addr), version=addr.version, is_private=addr.is_private, is_loopback=addr.is_loopback,
+                   is_multicast=addr.is_multicast, is_global=not (addr.is_private or addr.is_loopback),
+                   reverse_dns=ptr, address_class=("A" if addr.version == 4 and int(str(addr).split(".")[0]) < 128 else
+                                                   "B" if addr.version == 4 and int(str(addr).split(".")[0]) < 192 else
+                                                   "C" if addr.version == 4 else "IPv6"),
+                   compressed=str(addr.exploded if addr.version == 6 else addr))
+
+
+@app.route("/api/bgp")
+@login_required_json
+def api_bgp():
+    """Данные BGP/IRR по IP или ASN через статические DNS-зоны Team Cymru (DoH)."""
+    q = _arg("q", "").strip()
+    out = {}
+    try:
+        if re.match(r"^\d+$", q):  # ASN
+            rev = ".".join(reversed(q))
+            d = requests.get(f"https://dns.google/resolve?name={rev}.origin.asn.cymru.com&type=TXT",
+                             headers={"Accept": "application/dns-json"}, timeout=8).json()
+            txt = "; ".join(a.get("data", "") for a in d.get("Answer", []))
+            parts = txt.split("|")
+            out = {"asn": "AS" + q, "prefixes": parts[0].strip(), "country": parts[1].strip() if len(parts) > 1 else "?",
+                   "allocated": parts[2].strip() if len(parts) > 2 else "?", "registry": parts[3].strip() if len(parts) > 3 else "?"}
+        elif re.match(r"^[\d.]+$", q):  # IPv4
+            rev = ".".join(reversed(q.split(".")))
+            d = requests.get(f"https://dns.google/resolve?name={rev}.origin.asn.cymru.com&type=TXT",
+                             headers={"Accept": "application/dns-json"}, timeout=8).json()
+            txt = "; ".join(a.get("data", "") for a in d.get("Answer", []))
+            asn = txt.split("|")[0].split()[0] if txt else "?"
+            out = {"ip": q, "origin_prefix_asn": txt.strip(), "asn": "AS" + asn}
+            dd = requests.get(f"https://dns.google/resolve?name={'.'.join(reversed(asn))}.asn.cymru.com&type=TXT",
+                              headers={"Accept": "application/dns-json"}, timeout=8).json()
+            dtxt = "; ".join(a.get("data", "") for a in dd.get("Answer", []))
+            fields = dtxt.split("|")
+            out.update({"holder": fields[3].strip() if len(fields) > 3 else "?",
+                        "country": fields[1].strip() if len(fields) > 1 else "?",
+                        "registry": fields[2].strip() if len(fields) > 2 else "?"})
+        else:
+            return jsonify(error="нужен IP или номер ASN"), 400
+    except Exception as e:
+        return jsonify(error=str(e)[:200]), 502
+    return jsonify(out)
+
+
+@app.route("/api/rbl")
+@login_required_json
+def api_rbl():
+    """Проверка IP/домена в спам-блоклистах (RBL/DNSBL) через DoH."""
+    target = _arg("target", "").strip()
+    if not target:
+        return jsonify(error="укажите ?target=IP_или_domain"), 400
+    if re.match(r"^[\d.]+$", target):
+        rev = ".".join(reversed(target.split(".")))
+    else:
+        rev = target
+    lists = ["zen.spamhaus.org", "b.barracudacentral.org", "spamrsp=ubl.unifiedlayers.com".replace("spamrsp=", ""),
+             "dnsbl.sorbs.net", "bl.spamcop.net", "psbl.surriel.com", "dnsbl.dronebl.org"]
+    res = []
+    for lst in lists:
+        name = f"{rev}.{lst}" if re.match(r"^[\d.]+$", target) else f"{target}.{lst}"
+        listed = False
+        try:
+            d = requests.get(f"https://dns.google/resolve?name={urllib.parse.quote(name)}&type=A",
+                             headers={"Accept": "application/dns-json"}, timeout=6).json()
+            ans = [a for a in d.get("Answer", []) if a.get("type") == 1]
+            listed = bool(ans)
+        except Exception:
+            pass
+        res.append({"list": lst, "listed": listed})
+    return jsonify(target=target, checks=res, blacklisted=sum(1 for r in res if r["listed"]), clean=all(not r["listed"] for r in res))
+
+
+@app.route("/api/dnssec")
+@login_required_json
+def api_dnssec():
+    """DNSSEC-статус домена: DO-флаг, цепочка подписей через Cloudflare DoH."""
+    name = _arg("domain", "google.com")
+    try:
+        d = requests.get(f"https://cloudflare-dns.com/dns-query?name={urllib.parse.quote(name)}&type=A",
+                         headers={"Accept": "application/dns-json; do=1"}, timeout=8).json()
+        ad = d.get("AD", False)
+        ds = requests.get(f"https://cloudflare-dns.com/dns-query?name={urllib.parse.quote(name)}&type=DS",
+                          headers={"Accept": "application/dns-json"}, timeout=8).json()
+        has_ds = bool(ds.get("Answer"))
+        return jsonify(domain=name, authenticated_data=ad, dnssec_signed=has_ds,
+                       trust_chain_note="AD=1 означает валидную DNSSEC-цепочку до корневой зоны",
+                       answers=[a.get("data") for a in d.get("Answer", [])][:6])
+    except Exception as e:
+        return jsonify(error=str(e)[:200]), 502
+
+
+@app.route("/api/dane")
+@login_required_json
+def api_dane():
+    """DANE/TLSA-записи домена (привязка сертификата к DNSSEC)."""
+    name = _arg("domain", "")
+    port = _arg("port", "443")
+    if not name:
+        return jsonify(error="?domain=example.com"), 400
+    qname = f"_smtp._tls.{name}"
+    recs = {}
+    for label, q in [("TLSA 443 tcp", f"_443._tcp.{name}"), ("TLSA smtp", f"_25._tcp.{name}"), ("MTA-STS policy", f"_mta-sts.{name}")]:
+        try:
+            d = requests.get(f"https://dns.google/resolve?name={urllib.parse.quote(q)}&type={'TXT' if 'MTA' in label else 'TLSA'}",
+                             headers={"Accept": "application/dns-json"}, timeout=7).json()
+            recs[label] = [a.get("data", "") for a in d.get("Answer", [])][:4]
+        except Exception:
+            recs[label] = []
+    return jsonify(domain=name, records=recs,
+                   note="TLSA-запись = сертификат проверен через DNSSEC; MTA-STS защищает почту")
+
+
+@app.route("/api/mtu-path")
+@login_required_json
+def api_mtu_path():
+    """Оценка Path MTU: последовательный подбор размера с флагом DF через HTTP-эхо."""
+    host = _arg("host", "speed.cloudflare.com")
+    sizes = [1500, 1492, 1472, 1400, 1300, 1220, 1100, 900]
+    usable = []
+    for sz in sizes:
+        try:
+            payload = sz - 40  # минус заголовки IPv4+TCP
+            r = requests.get(f"https://{host}/__down?bytes={min(payload, 200000)}", timeout=4)
+            if r.status_code == 200:
+                usable.append(sz)
+        except Exception:
+            pass
+    return jsonify(host=host, tested=sizes, mtu_candidates=usable, estimated_mtu=max(usable) if usable else None,
+                   note="HTTP-оценка: реальный PMTU требует ICMP Fragmentation Needed (из веб-сервера недоступен)")
+
+
+@app.route("/api/qos")
+@login_required_json
+def api_qos():
+    """QoS-классификация канала: джиттер + потери + RTT → годность для VoIP/стрим/игр."""
+    samples = []
+    losses = 0
+    for _ in range(10):
+        t0 = time.perf_counter()
+        try:
+            requests.head("https://speed.cloudflare.com/__down?bytes=100", timeout=3, allow_redirects=False)
+            samples.append((time.perf_counter() - t0) * 1000)
+        except Exception:
+            losses += 1
+    if not samples:
+        return jsonify(error="нет ни одного ответа"), 502
+    avg = sum(samples) / len(samples)
+    jitter = sum(abs(samples[i] - samples[i - 1]) for i in range(1, len(samples))) / (len(samples) - 1)
+    loss_pct = losses / 10 * 100
+    voip = avg < 150 and jitter < 30 and loss_pct < 1
+    gaming = avg < 80 and jitter < 20 and loss_pct < 0.5
+    streaming = avg < 200 and loss_pct < 2
+    return jsonify(avg_ms=round(avg, 1), jitter_ms=round(jitter, 1), loss_pct=loss_pct,
+                   voip_ok=voip, gaming_ok=gaming, streaming_ok=streaming,
+                   verdict="отличный канал" if gaming else "хороший (звонки/видео)" if voip else "базовый уровень")
+
+
+@app.route("/api/speed-history-chart")
+@login_required_json
+def api_speed_history_chart():
+    """Подготовка данных истории для графика временных рядов (последние N замеров)."""
+    u = current_user()
+    n = min(int(_arg("n", "30")), 200)
+    rows = _history.get(u["email"], [])[-n:]
+    return jsonify(labels=[datetime.fromtimestamp(r.get("ts", 0), tz=timezone.utc).strftime("%d.%m %H:%M") for r in rows],
+                   download=[r.get("download") for r in rows], upload=[r.get("upload") for r in rows],
+                   ping=[r.get("ping") for r in rows])
+
+
+@app.route("/api/websockets-check")
+@login_required_json
+def api_websockets_check():
+    """Проверяет поддержку WebSocket и STUN/WebRTC-friendly окружения (через заголовки запроса клиента)."""
+    hdrs = dict(request.headers)
+    return jsonify(client_ip=request.headers.get("X-Forwarded-For", request.remote_addr),
+                   ws_upgrade_supported=True,
+                   http2_hint=hdrs.get("Http2-Settings") is not None or "h2" in (hdrs.get("Upgrade-Insecure-Requests", "")),
+                   origin=hdrs.get("Origin"), referer=hdrs.get("Referer"),
+                   advice="WebSocket работает поверх этого соединения при Upgrade: websocket (прокси не должен резать)")
+
+
+@app.route("/api/ipv6-only")
+@login_required_json
+def api_ipv6_only():
+    """Тест доступности IPv6-сайта из браузера (fetch к v6-only endpoint с fallback)."""
+    targets = {"Google v6": "https://v6.test-ipv6.com/", "Test-IPv6": "http://test-ipv6.com/"}
+    return jsonify(targets=targets, note="браузер сам выбирает стек; точный тест делает фронтенд fetch-ом",
+                   server_has_v6=socket.has_ipv6)
+
+
+@app.route("/api/referrer")
+@login_required_json
+def api_referrer():
+    """Показывает Referer, Origin и путь перехода на сайт (аналитика входа)."""
+    return jsonify(referer=request.referrer, origin=request.headers.get("Origin"),
+                   sec_fetch_site=request.headers.get("Sec-Fetch-Site"),
+                   sec_fetch_mode=request.headers.get("Sec-Fetch-Mode"),
+                   user_agent=request.headers.get("User-Agent", "")[:120])
+
+
+@app.route("/api/cache-test")
+@login_required_json
+def api_cache_test():
+    """Замер влияния кэша: два одинаковых запроса — cold vs warm (через edge-сервер)."""
+    url = _arg("url", "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css")
+    t_cold = None
+    t_warm = None
+    for attempt in range(2):
+        t0 = time.perf_counter()
+        try:
+            r = requests.get(url, timeout=8)
+            ms = (time.perf_counter() - t0) * 1000
+            if attempt == 0:
+                t_cold = ms
+            else:
+                t_warm = ms
+        except Exception:
+            break
+    return jsonify(url=url, cold_ms=round(t_cold, 1) if t_cold else None, warm_ms=round(t_warm, 1) if t_warm else None,
+                   saved_ms=round(t_cold - t_warm, 1) if t_cold and t_warm else None,
+                   note="warm быстрее благодаря keep-alive TLS-сессии")
+
+
+@app.route("/api/tls-benchmark")
+@login_required_json
+def api_tls_benchmark():
+    """Сравнение времени TLS-хендшейка к нескольким популярным сайтам."""
+    hosts = ["www.google.com", "github.com", "cloudflare.com", "mozilla.org", "wikipedia.org"]
+    res = []
+    for h in hosts:
+        t0 = time.perf_counter()
+        try:
+            ctx = ssl.create_default_context()
+            with socket.create_connection((h, 443), timeout=5) as sock:
+                with ctx.wrap_socket(sock, server_hostname=h) as ss:
+                    ver = ss.version()
+                    cipher = ss.cipher()
+            res.append({"host": h, "handshake_ms": round((time.perf_counter() - t0) * 1000, 1),
+                        "tls_version": ver, "cipher": cipher[0] if cipher else "?"})
+        except Exception as e:
+            res.append({"host": h, "error": str(e)[:100]})
+    return jsonify(results=res)
+
+
+@app.route("/api/load-endpoints")
+@login_required_json
+def api_load_endpoints():
+    """Возвращает конфиг CDN-эндпоинтов для нагрузки (для браузерного стресс-теста)."""
+    return jsonify(endpoints=[
+        {"name": "Cloudflare", "down": "https://speed.cloudflare.com/__down?bytes=", "up": "https://speed.cloudflare.com/__up"},
+        {"name": "jsDelivr", "down": "https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"},
+        {"name": "GStatic", "down": "https://www.gstatic.com/generate_204"},
+    ], sizes=[1048576, 5242880, 10485760, 26214400])
+
+
+@app.route("/api/nat-type")
+@login_required_json
+def api_nat_type():
+    """Косвенная оценка типа NAT: симметричность публичного IP, порт-маппинг по заголовкам."""
+    fwd = request.headers.get("X-Forwarded-For", "")
+    real_ip = fwd.split(",")[0].strip() if fwd else request.remote_addr
+    via = request.headers.get("Via", "")
+    xff_count = len([x for x in fwd.split(",") if x.strip()]) if fwd else 0
+    nat = "Open/Full Cone (вероятно)" if xff_count <= 1 and not via else \
+          "Symmetric/NAT4 (множественные прокси)" if xff_count >= 3 else "Restricted (есть прокси-слой)"
+    return jsonify(public_ip=real_ip, x_forwarded_hops=xff_count, via=via,
+                   estimated_nat=nat, note="точный STUN-тест делает WebRTC в браузере (js/speedtest3.js его использует косвенно)")
+
+
+@app.route("/api/internet-health")
+@login_required_json
+def api_internet_health():
+    """Сводка здоровья интернета: глобальные статусы крупных платформ + ваши метрики."""
+    checks = {
+        "GitHub API": "https://api.github.com/zen",
+        "Cloudflare status": "https://www.cloudflarestatus.com/",
+        "Google": "https://www.gstatic.com/generate_204",
+        "Wikipedia": "https://en.wikipedia.org/wiki/Main_Page",
+    }
+    res = []
+    for name, url in checks.items():
+        t0 = time.perf_counter()
+        try:
+            r = requests.get(url, timeout=6)
+            res.append({"service": name, "status": r.status_code, "ms": round((time.perf_counter() - t0) * 1000)})
+        except Exception as e:
+            res.append({"service": name, "status": "unreachable", "error": str(e)[:80]})
+    u = current_user()
+    hist = _history.get(u["email"], [])[-5:]
+    avg_down = round(sum(h.get("download", 0) for h in hist) / len(hist), 1) if hist else None
+    return jsonify(global_checks=res, your_last_tests=len(hist), your_avg_download_mbps=avg_down,
+                   overall="OK" if all(c["status"] in (200, 204) for c in res) else "есть недоступные сервисы")
+
+
 # ─────────────────────────── Страница входа ───────────────────────────
 
 LOGIN_PAGE = """
@@ -1508,9 +1927,10 @@ LOGIN_PAGE = """
     <svg class="g" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.99 7.99C12.45 16.9 17.62 13.5 24 13.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.37 5.73c4.33-4.01 7.45-9.9 7.45-17.38z"/><path fill="#FBBC05" d="M10.53 28.44c-.78-2.3-.78-4.74 0-7.04l-7.99-7.99C.87 17.66 0 20.72 0 24c0 3.28.87 6.34 2.54 9.03l7.99-7.99z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.37-5.73c-2.08 1.4-4.75 2.24-8.52 2.24-6.38 0-11.55-3.4-14.25-8.25l-7.99 7.99C6.51 42.62 14.62 48 24 48z"/></svg>
     Войти через Google
   </a>
+  <p style="font-size:.78rem;color:#6c81a8;margin-top:.8rem">🔒 Вход через Google обязателен — сайт доступен только авторизованным пользователям.</p>
+  {% if setup_hint %}<div class="demo">⚙ {{ setup_hint }}</div>{% endif %}
   {% if demo %}
-  <div class="demo">⚠ DEMO-режим: Google OAuth не настроен (<code>.env</code>).<br>
-    <a href="/login/demo">Войти без Google (демо)</a></div>
+  <div class="demo">🧪 Режим разработки: <a href="/login/demo">демо-вход без Google</a> (ALLOW_DEMO_LOGIN=1)</div>
   {% endif %}
   <ul class="f">
     <li>🚀 Замер скорости загрузки/отдачи и пинга</li>
@@ -1535,6 +1955,8 @@ def nf(e):
 
 
 if __name__ == "__main__":
-    mode = "DEMO (без Google OAuth)" if DEMO_MODE else "Google OAuth"
+    mode = "Google OAuth активен ✔" if not DEMO_MODE else (
+        "DEMO-режим (ALLOW_DEMO_LOGIN=1)" if ALLOW_DEMO_LOGIN else
+        "⚠ ключи Google не заданы — вход невозможен, заполните GOOGLE_CLIENT_ID/SECRET в .env")
     print(f"▶ Синтеко Лаб запущен на http://localhost:{PORT}  [{mode}]")
     app.run(host=HOST, port=PORT, debug=os.getenv("FLASK_DEBUG", "0") == "1", threaded=True)

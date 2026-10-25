@@ -184,6 +184,103 @@ var NETLAB = (() => {
         out(`IP: ${w.ip} (${info.ip})\nПровайдер: ${(w.connection || {}).isp || info.org}\nASN: ${(w.connection || {}).asn || "?"} · тип сети: ${(w.connection || {}).type || "?"}\nVPN: ${sec.vpn ? "⚠ ОБНАРУЖЕН" : "нет"} · Proxy: ${sec.proxy ? "⚠ да" : "нет"} · Tor: ${sec.tor ? "⚠ да" : "нет"}\nДата-центр по org: ${isDC ? "⚠ похож на хостинг" : "нет — домашний/мобильный"}\nГеология: ${w.city}, ${w.country} (${w.latitude}, ${w.longitude})`);
       } catch (e) { out("✖ " + e.message); }
     },
+    async ports() {
+      const host = prompt("Хост для скана портов:", "example.com") || "example.com";
+      out("🔌 Сканирую TCP-порты " + host + "…");
+      try {
+        const d = await jfetch("/api/ports?host=" + encodeURIComponent(host));
+        const rows = d.results.map(r => (r.port + "       ").slice(0, 8) + (r.open ? "✔ ОТКРЫТ" : "✖ закрыт") + " · " + r.ms + " мс").join("\n");
+        out(`Порты ${host}:\n${rows}\n\nОткрыто: ${d.open.join(", ") || "нет"}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async cidr() {
+      const c = prompt("CIDR-подсеть (например 192.168.1.0/24):", "10.0.0.0/22") || "";
+      try {
+        const d = await jfetch("/api/cidr?cidr=" + encodeURIComponent(c));
+        if (d.error) return out("✖ " + d.error);
+        out(`CIDR ${c} →\nСеть: ${d.network}/${d.prefixlen} · маска: ${d.netmask}\nВсего адресов: ${d.hosts_total.toLocaleString()} · хостовых: ${d.usable.toLocaleString()}\nПервый хост: ${d.first_host} · последний: ${d.last_host}\nBroadcast: ${d.broadcast ?? "—"} · wildcard: ${d.wildcard ?? "—"}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async emailchk() {
+      const em = prompt("Email для проверки:", "") || "";
+      if (!em) return;
+      try {
+        const d = await jfetch("/api/email-check?email=" + encodeURIComponent(em));
+        if (!d.valid) return out("✖ " + d.reason);
+        out(`Email: ${d.email}\nЛокальная часть: ${d.local} · домен: ${d.domain}\nMX-серверы: ${(d.mx || []).join(", ") || "нет"}\nДоставка возможна: ${d.deliverable ? "да ✔" : "нет ✖"}\nПочтовый сервис бесплатный: ${d.free_mail ? "да" : "нет"} · ролевой ящик: ${d.role_account ? "да ⚠" : "нет"}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async bgpq() {
+      const q = prompt("IP или номер ASN (например 8.8.8.8 или AS15164):", "8.8.8.8") || "";
+      try {
+        const d = await jfetch("/api/bgp?q=" + encodeURIComponent(q.replace(/^AS/i, "")));
+        if (d.error) return out("✖ " + d.error);
+        out("BGP/IRR данные (Team Cymru):\n" + Object.entries(d).map(([k, v]) => k + ": " + v).join("\n"));
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async rblchk() {
+      const t = prompt("IP или домен для проверки в спам-листах:", "") || "";
+      if (!t) return;
+      out("🚫 Проверяю " + t + " в 7 RBL-зонах…");
+      try {
+        const d = await jfetch("/api/rbl?target=" + encodeURIComponent(t));
+        const rows = d.checks.map(c => (c.list.padEnd(24)) + (c.listed ? "⚠ В СПИСКЕ" : "✔ чист")).join("\n");
+        out(`RBL-проверка ${t}:\n${rows}\n\n${d.clean ? "✔ IP/домен не в блоклистах" : "⚠ найден в " + d.blacklisted + " списках"}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async dnssecapi() {
+      const dm = prompt("Домен:", "google.com") || "google.com";
+      try {
+        const d = await jfetch("/api/dnssec?domain=" + encodeURIComponent(dm));
+        out(`DNSSEC ${dm}:\nПодписан (DS-запись): ${d.dnssec_signed ? "да ✔" : "нет"}\nAuthenticated Data: ${d.authenticated_data ? "да ✔" : "нет"}\nA-записи: ${(d.answers || []).join(", ")}\n${d.trust_chain_note || d.error || ""}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async dane() {
+      const dm = prompt("Домен для DANE/TLSA:", "github.com") || "";
+      try {
+        const d = await jfetch("/api/dane?domain=" + encodeURIComponent(dm));
+        const rows = Object.entries(d.records).map(([k, v]) => k + ": " + (v.length ? v.join(" | ").slice(0, 80) : "нет записей")).join("\n");
+        out(`DANE ${dm}:\n${rows}\n\n${d.note}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async qosapi() {
+      out("🎮 QoS-классификация канала (10 замеров)…");
+      try {
+        const d = await jfetch("/api/qos");
+        out(`QoS вашего канала (со стороны сервера):\nRTT: ${d.avg_ms} мс · джиттер: ${d.jitter_ms} мс · потери: ${d.loss_pct}%\nVoIP/звонки: ${d.voip_ok ? "✔ годно" : "✖ нет"}\nОнлайн-игры: ${d.gaming_ok ? "✔ годно" : "✖ нет"}\nСтриминг: ${d.streaming_ok ? "✔ годно" : "✖ нет"}\nВЕРДИКТ: ${d.verdict}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async tlsbench() {
+      out("🤝 TLS-бенчмарк: хендшейки к 5 сайтам…");
+      try {
+        const d = await jfetch("/api/tls-benchmark");
+        const rows = d.results.map(r => (r.host.padEnd(18)) + (r.error ? "✖ " + r.error.slice(0, 30) : `${r.handshake_ms} мс · ${r.tls_version} · ${r.cipher.split("-").slice(0, 2).join("-")}`)).join("\n");
+        out("TLS handshake (полный, без сессии):\n" + rows);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async nattype() {
+      try {
+        const d = await jfetch("/api/nat-type");
+        out(`Оценка NAT по пути запроса:\nПубличный IP: ${d.public_ip}\nПрокси-хопов (XFF): ${d.x_forwarded_hops} · Via: ${d.via || "нет"}\nТип (оценка): ${d.estimated_nat}\n${d.note}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async health() {
+      out("🌍 Проверяю здоровье ключевых сервисов интернета…");
+      try {
+        const d = await jfetch("/api/internet-health");
+        const rows = d.global_checks.map(c => (c.service.padEnd(18)) + (c.status === "unreachable" ? "✖ недоступен" : `✔ ${c.status} · ${c.ms} мс`)).join("\n");
+        out(`Глобальные статусы:\n${rows}\n\nВаши последние тесты: ${d.your_last_tests} · средний download: ${d.your_avg_download_mbps ?? "—"} Мбит/с\nОбщий вердикт: ${d.overall}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
+    async hchart() {
+      try {
+        const d = await jfetch("/api/speed-history-chart?n=30");
+        if (!d.labels.length) return out("История замеров пуста — сначала пройдите Speedtest.");
+        const maxD = Math.max(...d.download.filter(x => x), 1);
+        const bars = d.labels.map((lb, i) => lb + " ↓" + String(d.download[i] ?? 0).padStart(6) + " ↑" + String(d.upload[i] ?? 0).padStart(6) + " " + "█".repeat(Math.round((d.download[i] || 0) / maxD * 20))).join("\n");
+        out(`История замеров (${d.labels.length}):\n${bars}`);
+      } catch (e) { out("✖ " + e.message); }
+    },
     async uptime() {
       const url = prompt("URL для фонового uptime-мониторинга:", "https://api.github.com/zen");
       if (!url) return;
@@ -281,6 +378,13 @@ var NETLAB = (() => {
       if (evt === "ping") checkAlarm(d);
     });
     renderStats(NETMON.getStats());
+    // чип пользователя в топбаре (Google-аккаунт)
+    jfetch("/api/me").then(d => {
+      const n = document.getElementById("ucName"), av = document.getElementById("ucAvatar");
+      if (n) n.textContent = (d.user.name || d.user.email).split(" ")[0];
+      if (av && d.user.picture) { av.src = d.user.picture; av.hidden = false; }
+    }).catch(() => {});
+
 
     document.addEventListener("visibilitychange", () => {
       if (localStorage.getItem("nl_autopause") === "0") return;

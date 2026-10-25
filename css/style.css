@@ -502,3 +502,12 @@ textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
 #stPoster{width:100%;max-width:640px;border-radius:10px;display:block;margin-bottom:.6rem}
 .shared-box{margin-top:.8rem;padding:.8rem 1rem;border-radius:12px;background:rgba(110,168,255,.08);border:1px solid rgba(110,168,255,.25)}
 @media (max-width:760px){.spx-hero{grid-template-columns:1fr}.spx-side{grid-template-columns:repeat(4,1fr)}.spx-results{grid-template-columns:1fr}}
+
+/* ═══ v4: чип Google-пользователя + кнопки новых тестов ═══ */
+.user-chip{display:flex;align-items:center;gap:.4rem;padding:.28rem .6rem;border-radius:999px;
+  border:1px solid rgba(120,160,255,.28);background:#101b30;font-size:.8rem;color:#cfe0ff;white-space:nowrap}
+.user-chip img{width:20px;height:20px;border-radius:50%;object-fit:cover}
+.user-chip a{color:#7fd4ff;text-decoration:none;font-weight:700;margin-left:.15rem}
+.user-chip a:hover{color:#ff9a9a}
+.v4b{border-style:dashed !important}
+@media (max-width:900px){.user-chip{display:none}}

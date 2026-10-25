@@ -1,78 +1,52 @@
-# Синтеко Лаб — Industrial Telemetry Console
+# SpeedNet — спидометр интернета с входом через Google
 
-Интерактивный одностраничный дашборд промышленного IoT-мониторинга. Полностью клиентское приложение **без единой зависимости**: движок симуляции телеметрии, canvas-графики собственной реализации, журнал событий, алерты, расчёт экономики.
+Полноценный аналог speedtest.net: тест скорости (загрузка/отдача/ping/jitter), 70+ интернет-инструментов, история замеров. Весь бэкенд — один файл `app.py` (Flask), настройки — `.env`. Работает на ПК и в **Termux** на Android.
 
-## Возможности
+## 🔐 Вход через Google (обязателен)
 
-### 📡 Движок симуляции (`js/simulation.js`)
-- 4 цеха с 4 метриками каждый (производительность, температура, вибрация, мощность)
-- Генеративные процессы: синусоидальные режимы + гауссов шум (Box–Muller), EMA-инерция температуры, случайные инциденты и восстановление
-- Симуляция канала связи: задержка, деградация сигнала
-- Счётчики выработки/брака по типам, энергия, OEE по сменам, SLA/аптайм
-- Пороги алертов, raising/clearing алертов с гистерезисом, журнал до 4000 событий
+Без авторизации сайт недоступен: главная страница и все `/api/*` требуют сессию Google.
 
-### 📊 Графики на чистом Canvas (`js/charts.js`)
-- Line/area-чарт с сеткой, пороговой линией, маркером последней точки и hover-перекрестием
-- Полукольцевой gauge загрузки мощностей, donut брака с легендой, bar-чарт OEE с целью
-- Sparkline в KPI-карточках; всё поддерживает HiDPI (devicePixelRatio)
-
-### 🖥 Интерфейс (`js/dashboard.js`)
-- 4 вкладки: **Обзор / Аналитика / Журнал событий / Настройки**
-- 6 KPI-карточек с дельтой за 30 секунд и спарклайнами
-- Фильтр графика по цеху (клик), стоп/пуск цеха (двойной клик)
-- Быстрые действия: калибровка, снимок JSON (clipboard), сброс счётчиков, E-STOP с подтверждением в модалке
-- Экономика: калькулятор эффекта (рост OEE / снижение брака / экономия энергии) с анимацией числа и проекцией по месяцам
-- Матрица рисков 5×5 с тултипами
-- Журнал событий: живой поиск, фильтр по уровню, сортировка, пагинация, экспорт CSV (BOM для Excel)
-- Звуковые уведомления ERROR/CRIT через WebAudio, тосты, модальные диалоги (Promise-based)
-- Настройки сохраняются в localStorage; скорость симуляции 0.25–4×, глубина истории, плотная таблица, сетка графиков
-- Полностью адаптивная тёмная тема, sticky-топбар, live/pause потока данных
-
-## Структура
-
+**Куда вставить ваш API-ключ (клиент Google OAuth):**
+1. Скопируйте `.env.example` → `.env` (или просто создайте `.env`)
+2. Впишите две строки:
 ```
-index.html          — разметка всех секций
-css/style.css       — тема, layout, компоненты (~330 строк)
-js/utils.js         — PRNG (mulberry32), статистика, fmt, store, toast/modal, canvas HiDPI
-js/simulation.js    — движок телеметрии (IIFE-модуль SIM)
-js/charts.js        — примитивы графиков (CHARTS)
-js/dashboard.js     — связующий слой UI (DASH)
-.github/workflows/  — автодеплой статичных файлов в GitHub Pages
+GOOGLE_CLIENT_ID=ваш_клиент_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=ваш_секрет
 ```
+3. Перезапустите сервер (`python app.py`). Готово — на странице входа появится кнопка «Войти через Google».
 
-## Запуск
+Как получить ключи: [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Credentials → Create OAuth client ID (Web application) → Authorized redirect URI: `http://localhost:5000/oauth2/callback` (или ваш домен).
 
-Просто откройте `index.html` в браузере — сервер не нужен. Либо:
+Дополнительно: `ALLOWED_EMAILS=a@b.com,c@d.com` — пускать только эти адреса. Для локальной разработки без Google можно включить обходной демо-вход: `ALLOW_DEMO_LOGIN=1` (по умолчанию выключен).
 
+## 🚀 Запуск
+
+### Обычный (ПК/сервер)
 ```bash
-python3 -m http.server 8080   # или npx serve
+pip install -r requirements.txt   # нужен только Flask
+cp .env.example .env              # вписать GOOGLE_CLIENT_ID / SECRET
+python app.py                     # http://localhost:5000
 ```
 
-## Демо
-
-🔗 https://<username>.github.io/syntheco-lab/
-
----
-*Все данные генерируются локально в браузере и не покидают ваше устройство.*
-
-## 🔧 Зависимости (обновлено)
-
-Проект переведён на **встроенные библиотеки Python (stdlib)** — из внешних нужен только **Flask**:
-
+### Termux (Android)
+Установите Termux из F-Droid (не из Play Market), затем:
 ```bash
-pip install flask
-python app.py
+pkg update && pkg install -y git python openssl libffi
+git clone https://github.com/vanyapepei920-sudo/qwen-chat.git
+cd qwen-chat
+./run.sh          # или bash start-termux.sh
 ```
-
-Что заменено на stdlib-реализации внутри `app.py`:
-- ~~requests~~ → собственный HTTP-клиент на `urllib.request` (`HttpResponse`, `_Session`) с GET/POST/HEAD, редиректами, стримингом и JSON
-- ~~authlib~~ → Google OAuth 2.0 вручную: authorize-redirect + обмен кода на токен через TLS (`urllib`), разбор id_token (`base64`/`json`), защита CSRF-параметром `state` (`secrets`)
-- ~~python-dotenv~~ → встроенный мини-парсер `.env` (`load_dotenv()` на `os.environ`)
-
+`run.sh` сам ставит зависимости и запускает сервер. Доступ: http://localhost:5000.
+С другого устройства в Wi-Fi: `BIND_ALL=1 ./run.sh`, откройте `http://IP-телефона:5000` (IP — команда `ifconfig`).
 
 ## ⚡ Speedtest REAL v3
-- Настоящий движок: 8 параллельных потоков download / 4 upload, ramp-up
-- Реальные test-серверы Cloudflare по городам мира + автовыбор ближайшего (geo + ping)
-- Ручной выбор сервера («Change Server») с замером пинга
-- Gauge-спидометр, live-график, вердикт A+…F, видео-профиль
-- Поделиться результатом: ссылка + картинка-постер; история localStorage + сервер
+Гauge-спидометр до 1 Гбит/с · 8 параллельных потоков download + 4 upload · 15 edge-серверов Cloudflare по городам мира · автовыбор ближайшего POP (гео + реальный пинг) · ручной выбор сервера · ping/jitter/потери · live-график · кнопка Стоп · вердикт A+…F + видео-профиль (SD→8K) · шаринг результата ссылкой и постером · история (localStorage + сервер).
+
+## 🌐 Интернет-функции (70+ эндпоинтов)
+- **Скорость**: ping, jitter, download/upload, throughput, QoS, MTU/MTU-path, TLS-benchmark, latency-map, NAT-type, proxy-check
+- **IP/гео**: ipinfo, client-geo, geolocate, timezone, headers, useragent, referrer
+- **DNS/сеть**: dns, dnssec, dane, bgp, rbl, whois, ports, ping-sweep, traceroute, cidr/subnet-info, websockets-check, cache-test, censorship
+- **Полезное**: weather, crypto, exchange, news, rss, search, translate, qr, hash, password, random, email-check, url-analyze, httpstatus, uptime, tld, shortening, internet-health
+- **История**: result, history, stats, speed-history-chart
+
+Все функции доступны только после входа. Секреты не коммитятся (`.env` в .gitignore).
