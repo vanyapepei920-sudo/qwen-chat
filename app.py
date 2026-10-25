@@ -1135,43 +1135,53 @@ def dev_uptime_add():
 
 # ============ БОТ-ПОМОЩНИК — бэкенд генерации текста (без ключей) ============
 # Модель задаётся в .env: ASSISTANT_MODEL (по умолчанию openai)
-# адреса текстовых бэкендов помощника (в основном из .env; запасные — на случай сбоя основного)
-ASSISTANT_FALLBACK_URLS = [
-    "https://text.pollinations.ai/openai",
-    "https://syntho.pollinations.ai/openai",
-]
+# адреса текстовых бэкендов помощника (переопределяются в .env: ASSISTANT_API_URL=url1,url2).
+# ВНИМАНИЕ: раньше здесь был «запасной» syntho.pollinations.ai — такого хоста не существует,
+# он никогда не резолвился и только тратил ~15 секунд на DNS-ретраи при каждом запросе.
+ASSISTANT_DEFAULT_URLS = ["https://text.pollinations.ai/openai"]
 
 def assistant_api_urls():
     raw = genv("ASSISTANT_API_URL") or ""
     urls = [u.strip() for u in raw.split(",") if u.strip()]
-    for fb in ASSISTANT_FALLBACK_URLS:
+    for fb in ASSISTANT_DEFAULT_URLS:
         if fb not in urls:
             urls.append(fb)
     return urls
 
 
-class _AssistantSession(http_lib.Session):
-    """Отдельная сессия с keep-alive и повторными попытками на уровне соединения.
-    При обрыве TLS (SSLEOFError / ProtocolError) requests внутри urllib3 не
-    переиспользует «протухшее» соединение — каждое новое обращение получает свежий коннект."""
-
-    def __init__(self):
-        super().__init__()
-        retry = Retry(total=3, connect=3, read=2, backoff_factor=0.6,
-                      status_forcelist=[], allowed_methods=frozenset(["GET", "POST"]),
-                      raise_on_status=False)
-        adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=8)
-        self.mount("https://", adapter)
-        self.mount("http://", adapter)
+def _no_retry_adapter():
+    # ретраи делает наш собственный цикл (с ротацией соединений), urllib3 отключён —
+    # иначе один SSLEOFError превращается в 3 скрытых повтора + долгие DNS-ретраи
+    return HTTPAdapter(max_retries=Retry(total=0, read=False),
+                       pool_connections=1, pool_maxsize=1)
 
 
-_assistant_http = None
+def _fresh_post(url, payload, stream=False, timeout=(10, 45)):
+    """Каждый запрос идёт в НОВОМ TCP+TLS соединении (Connection: close, пул выключен).
+    Это лечит 'SSLEOFError: UNEXPECTED_EOF_WHILE_READING': облачный балансировщик
+    закрывает idle keep-alive соединения, а переиспользование такого коннекта — главная
+    причина этих обрывов. Свежее соединение каждый раз = EOF практически исключён."""
+    s = http_lib.Session()
+    s.headers.update({"Connection": "close"})
+    s.mount("https://", _no_retry_adapter())
+    s.mount("http://", _no_retry_adapter())
+    try:
+        r = s.post(url, json=payload, timeout=timeout, stream=stream)
+        r._np_session = s          # сохранить сессию, чтобы закрыть после чтения тела
+        return r
+    except Exception:
+        s.close()
+        raise
 
-def _assistant_client():
-    global _assistant_http
-    if _assistant_http is None:
-        _assistant_http = _AssistantSession()
-    return _assistant_http
+
+def _close_resp(r):
+    try:
+        if r is not None: r.close()
+    except Exception: pass
+    try:
+        s = getattr(r, "_np_session", None)
+        if s is not None: s.close()
+    except Exception: pass
 
 ASSISTANT_SYSTEM_PROMPT = (
     "Ты — Палс, встроенный помощник сайта NetPulse (сервис проверки скорости интернета, "
@@ -1230,12 +1240,12 @@ def _assistant_call(history, user_text):
                "seed": int(time.time()) % 100000,
                "temperature": 0.5, "max_tokens": 700}
     last_err = None
-    client = _assistant_client()
-    # пробуем каждый адрес до 2 раз; при сетевых/SSL-сбоях переключаемся на следующий
+    # каждая попытка — в свежем соединении; при сетевом сбое короткая пауза и повтор
     for url in assistant_api_urls():
-        for attempt in range(2):
+        for attempt in range(3):
+            r = None
             try:
-                r = client.post(url, json=payload, timeout=(10, 40))
+                r = _fresh_post(url, payload, timeout=(10, 45))
                 try:
                     data = r.json()
                 except ValueError:
@@ -1257,7 +1267,9 @@ def _assistant_call(history, user_text):
             except (http_lib.exceptions.RequestException, OSError) as e:
                 last_err = type(e).__name__
                 log.warning("assistant backend %s attempt %d: %s", url, attempt + 1, e)
-                time.sleep(1.2 * (attempt + 1))
+                time.sleep(0.8 * (attempt + 1))
+            finally:
+                _close_resp(r)
     raise RuntimeError(f"Помощник временно недоступен (сетевой сбой). Повторите вопрос через пару секунд. [{str(last_err)[:80]}]")
 
 
@@ -1273,56 +1285,65 @@ def _assistant_stream(history, user_text):
     payload = {"messages": messages, "model": model, "referrer": "netpulse",
                "seed": int(time.time()) % 100000,
                "temperature": 0.5, "max_tokens": 700, "stream": True}
-    client = _assistant_client()
     last_err = None
     for url in assistant_api_urls():
         got = False
+        r = None
         try:
-            with client.post(url, json=payload, timeout=(10, 60), stream=True) as r:
-                if r.status_code != 200:
-                    last_err = f"HTTP {r.status_code}"
-                    continue
-                ctype = r.headers.get("Content-Type", "")
-                if "event-stream" not in ctype and "ndjson" not in ctype and "json" in ctype:
-                    # сервер проигнорировал stream=true — работаем как с обычным JSON
-                    data = r.json()
-                    choice = (data.get("choices") or [{}])[0]
-                    txt = ((choice.get("message") or {}).get("content") or "").strip()
-                    if txt:
-                        yield txt; return
-                    last_err = "пустой ответ модели"; continue
-                buf = b""
-                for chunk in r.iter_content(1024):
-                    if not chunk: continue
-                    buf += chunk
-                    while b"\n" in buf:
-                        line, buf = buf.split(b"\n", 1)
-                        line = line.strip()
-                        if not line.startswith(b"data:"): continue
-                        data = line[5:].strip()
-                        if data == b"[DONE]":
-                            if got: return
-                            break
-                        try:
-                            j = json.loads(data.decode("utf-8", "ignore"))
-                        except ValueError:
-                            continue
+            r = _fresh_post(url, payload, stream=True, timeout=(10, 60))
+            if r.status_code != 200:
+                last_err = f"HTTP {r.status_code}"
+                continue
+            ctype = r.headers.get("Content-Type", "")
+            if "event-stream" not in ctype and "ndjson" not in ctype and "json" in ctype:
+                # сервер проигнорировал stream=true — работаем как с обычным JSON
+                data = r.json()
+                choice = (data.get("choices") or [{}])[0]
+                txt = ((choice.get("message") or {}).get("content") or "").strip()
+                if txt:
+                    yield txt; return
+                last_err = "пустой ответ модели"; continue
+            buf = b""
+            for chunk in r.iter_content(1024):
+                if not chunk: continue
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line.startswith(b"data:"): continue
+                    data = line[5:].strip()
+                    if data == b"[DONE]":
+                        if got: return
+                        break
+                    try:
+                        j = json.loads(data.decode("utf-8", "ignore"))
+                    except ValueError:
+                        continue
+                    d = ""
+                    try:
+                        ch = (j.get("choices") or [{}])[0]
+                        d = ((ch.get("delta") or {}).get("content")
+                             or (ch.get("message") or {}).get("content") or "")
+                    except AttributeError:
                         d = ""
-                        try:
-                            ch = (j.get("choices") or [{}])[0]
-                            d = ((ch.get("delta") or {}).get("content")
-                                 or (ch.get("message") or {}).get("content") or "")
-                        except AttributeError:
-                            d = ""
-                        if d:
-                            got = True
-                            yield d
-                if got: return
+                    if d:
+                        got = True
+                        yield d
+            if got: return
         except (http_lib.exceptions.RequestException, OSError) as e:
             last_err = type(e).__name__
             log.warning("assistant stream %s: %s", url, e)
             if got:   # часть текста уже отправлена — не переключаем адрес
                 return
+        finally:
+            _close_resp(r)
+    # все адреса не ответили в стриме — одна быстрая попытка обычным запросом (свежее соединение)
+    try:
+        reply = _assistant_call(history, user_text)
+        yield reply
+        return
+    except Exception as e:
+        log.warning("assistant fallback after stream failed: %s", type(e).__name__)
     yield "\n\n⚠ Сервис помощника сейчас недоступен. Попробуйте ещё раз через 10–20 секунд."
 
 
