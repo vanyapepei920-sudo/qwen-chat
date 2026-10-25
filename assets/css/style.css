@@ -301,7 +301,7 @@ footer.foot b{color:var(--muted)}
 .mon-side{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 .mon-acts{display:flex;gap:6px}
 
-/* ---- ассистент (чат с Gemini) ---- */
+/* ---- бот-помощник (чат) ---- */
 .chat-card{display:flex;flex-direction:column}
 .chat-log{flex:1;min-height:320px;max-height:min(58vh,560px);overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px 2px 12px;scroll-behavior:smooth}
 .msg{display:flex}
