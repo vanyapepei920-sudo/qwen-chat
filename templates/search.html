@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Поиск — NetPulse{% endblock %}
+{% block content %}
+<div class="container"><div class="grid">
+  <section class="card glass col-12">
+    <div class="card-h"><h3>Google Custom Search</h3><div class="spacer"></div>
+      <span class="tag" id="sMeta">—</span></div>
+    <form id="sForm" class="s-form" autocomplete="off">
+      <input id="sQuery" class="inp big" placeholder="Введите запрос…" value="">
+      <div class="seg" id="sMode">
+        <button type="button" data-mode="web" class="active">Веб</button>
+        <button type="button" data-mode="image">Картинки</button>
+      </div>
+      <button type="submit" class="btn primary">🔎 Искать</button>
+    </form>
+    <div class="s-pager" id="sPager" hidden>
+      <button class="btn sm" id="sPrev">← Назад</button>
+      <span id="sPageInfo" style="font-family:var(--mono);font-size:12px;color:var(--muted)"></span>
+      <button class="btn sm" id="sNext">Вперёд →</button>
+    </div>
+    <div id="sResults" class="s-results"></div>
+    <div id="sEmpty" class="empty" style="padding:48px 20px">Введите запрос — результаты появятся здесь. Бесплатный лимит Google: 100 запросов/сутки.</div>
+  </section>
+</div></div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/search.js') }}"></script>{% endblock %}
