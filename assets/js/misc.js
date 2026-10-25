@@ -41,6 +41,23 @@
     $('#setWipeServer').onclick=async()=>{if(!confirm('Удалить всю историю измерений?'))return;await K.History.clear();K.toast('История удалена','ok',2200);};
     fetch('/api/health').then(r=>r.json()).then(j=>{$('#setHealth').innerHTML='ok · google-auth:'+(j.google_auth?'yes':'fallback')+' · search:'+(j.search?'yes':'no');}).catch(()=>$('#setHealth').textContent='недоступен');
 
+    /* --- мой API-ключ: ввод type=password, хранение в localStorage, автоподстановка в /api/v1 --- */
+    const mkEl=$('#myApiKey'), mkState=$('#myApiState');
+    function maskKey(k){return k.length<=8?k:k.slice(0,4)+'•'.repeat(Math.min(12,k.length-7))+k.slice(-3);}
+    function mkRefresh(){const cur=NPKey.get();if(cur&&!mkEl.value)mkEl.placeholder=maskKey(cur);
+      mkState.innerHTML=cur?('Ключ сохранён: <b style="font-family:var(--mono)">'+esc(maskKey(cur))+'</b> · подставляется автоматически во все запросы к /api/v1'):'Ключ не сохранён — запросы к /api/v1 пойдут без авторизации.';}
+    if(mkEl){
+      $('#myApiToggle').onclick=()=>{const t=mkEl.type==='password';mkEl.type=t?'text':'password';$('#myApiToggle').textContent=t?'🙈':'👁';};
+      $('#myApiSave').onclick=async()=>{const v=(mkEl.value||'').trim();
+        if(!v){K.toast('Введите ключ','warn',1600);return;}
+        NPKey.set(v);mkEl.value='';mkRefresh();K.toast('Ключ сохранён в этом браузере','ok',1800);
+        try{const r=await fetch('/api/v1/info',{headers:{'X-NetPulse-Key':v}});const j=await r.json();
+          mkState.innerHTML+=(r.ok&&j.ok)?('<br>✅ Проверка: ключ активен — «'+esc(j.key_name||'key')+'» ('+esc(j.env||'test')+')')
+            :('<br>⚠ Сервер отверг ключ (HTTP '+r.status+'): '+esc(j.error||'ошибка'));}catch(e){}};
+      $('#myApiClear').onclick=()=>{NPKey.clear();mkEl.value='';mkRefresh();K.toast('Ключ удалён из браузера','warn',1800);};
+      mkRefresh();
+    }
+
     /* --- Developer API ключи (sp-test-… / sp-live-…) --- */
     const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     let KEYS=[];

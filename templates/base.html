@@ -65,6 +65,7 @@
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>window.NP = { clientId:"{{ google_client_id|default('') }}", page:"{{ page|default('') }}", user:{{ user|tojson if user else 'null' }} };</script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 <script src="{{ url_for('static', filename='js/assistant.js') }}"></script>
 {% block scripts %}{% endblock %}
