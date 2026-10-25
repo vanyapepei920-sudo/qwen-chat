@@ -57,17 +57,21 @@ logging.basicConfig(level=logging.INFO,
     handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8"), logging.StreamHandler()])
 log = logging.getLogger("netpulse")
 
+# Ключи API могут читаться из переменных окружения (для деплоя: задайте их в панели хостинга)
+ENV_API_KEYS = {k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()}
+
 app = Flask(__name__, template_folder="templates",
             static_folder="assets", static_url_path="/assets")
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=SESSION_HOURS)
 CORS(app, supports_credentials=True,
-     origins=[f"http://{HOST}:{PORT}", "http://localhost:5000", "http://127.0.0.1:5000"])
+     origins=[f"http://{HOST}:{PORT}", "http://localhost:5000", "http://127.0.0.1:5000"],
+     resources={r"/api/v1/*": {"origins": "*"}, r"/api/v1": {"origins": "*"}})
 
-# Публичный Developer API (/api/v1) доступен с ЛЮБОГО сайта (ключи npk_ вместо cookies)
+# Публичный Developer API (/api/v1) доступен с ЛЮБОГО сайта (ключи sp-test-… вместо cookies)
 @app.after_request
 def _cors_devapi(resp):
-    if request.path.startswith("/api/v1/"):
+    if request.path.startswith("/api/v1"):
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-NetPulse-Key, Authorization"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
@@ -613,6 +617,21 @@ def _origin_ok(key_row, origin):
     allow = {o.strip().lower() for o in ao.split(",") if o.strip()}
     return origin.strip().lower() in allow
 
+def _db_ready(db):
+    try:
+        db.execute("SELECT 1 FROM dev_keys LIMIT 1"); return True
+    except sqlite3.Error:
+        return False
+
+def _env_key_row(raw):
+    """Ключ из переменных окружения (API_KEYS) — работает даже без созданной БД."""
+    parts = raw.split("-")
+    env_name = parts[1] if len(parts) > 4 and parts[0] == "sp" else "test"
+    return {"id": -1, "user_id": 0, "name": "env-key", "secret": "", "scopes": "basic,net,search",
+            "active": 1, "rate_limit": 120, "created_at": "", "last_used": "", "calls": 0,
+            "env": env_name, "allowed_origins": "*", "quota_day": 0, "revoked": 0,
+            "note": "задан переменной окружения API_KEYS", "expires_at": "", "key_mask": raw[:14] + "…"}
+
 def _dev_auth():
     """Ищет dev-ключ в заголовке X-NetPulse-Key / Authorization Bearer sp-… / ?key= (старый npk_ тоже принимается)"""
     raw = (request.headers.get("X-NetPulse-Key") or "").strip()
@@ -621,8 +640,13 @@ def _dev_auth():
         if hdr.startswith("Bearer sp-") or hdr.startswith("Bearer npk_"): raw = hdr.split(None,1)[1].strip()
     if not raw: raw = (request.args.get("key") or "").strip()
     if not (raw.startswith("sp-") or raw.startswith("npk_")): return None, None
-    h = hashlib.sha256(raw.encode()).hexdigest()
     db = get_db()
+    if not _db_ready(db):                    # если хранилище ещё не инициализировано — создаём его на лету
+        try: init_db()
+        except Exception as e: log.warning("auto init_db failed: %s", e)
+    if raw in ENV_API_KEYS:                  # ключ из переменных окружения (для деплоя)
+        return {"key": _env_key_row(raw), "user": {"id": 0, "name": "API", "email": ""}}, None
+    h = hashlib.sha256(raw.encode()).hexdigest()
     k = db.execute("SELECT * FROM dev_keys WHERE key_hash=?", (h,)).fetchone()
     if not k or not k["active"] or k["revoked"]: return None, "invalid_key"
     if (k["expires_at"] or "") and k["expires_at"] < datetime.now().isoformat(timespec="seconds"):
@@ -630,6 +654,8 @@ def _dev_auth():
     origin = request.headers.get("Origin","").strip()   # CORS allow-list по Origin (если задан)
     if origin and not _origin_ok(k, origin): return None, "origin_denied"
     now_ms = int(time.time()*1000)
+    if k["id"] == -1:                        # env-ключ: без счётчиков — сразу пропускаем
+        return {"key": dict(k), "user": {"id": 0, "name": "API", "email": ""}}, None
     # rate limit: скользящее окно 60 сек
     cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
                      (k["id"], now_ms-60000)).fetchone()["c"]
@@ -657,9 +683,14 @@ def dev_required(fn):
                     "expired_key":"Срок действия ключа истёк — создайте новый или продлите в настройках ключа.",
                     "origin_denied":"Запрос с этого Origin запрещён настройкой «Разрешённые домены» ключа."}
             return jsonify(ok=False, error=err or "missing_key",
-                           hint=hint.get(err, "Передайте ключ: заголовок 'X-NetPulse-Key: npk_…' или ?key=npk_…")), \
+                           hint=hint.get(err, "Передайте ключ: заголовок 'X-NetPulse-Key: sp-test-…' или ?key=sp-test-…")), \
                    429 if err=="rate_limited" else 401
-        g.dev = auth; return fn(*a, **k)
+        g.dev = auth
+        try:
+            return fn(*a, **k)
+        except Exception as e:               # чтобы вместо «голой» 500 был понятный JSON
+            log.exception("dev api %s failed", request.path)
+            return jsonify(ok=False, error="server_error", detail=str(e)[:200]), 500
     return w
 
 def _dev_scope(name):
@@ -670,6 +701,21 @@ def _dev_scope(name):
                        hint="Добавьте scope '%s' при создании ключа (пересоздайте ключ)." %
                             next((s for s,e in DEV_SCOPES.items() if name in e), name)), 403
     return None
+
+@app.route("/api/v1")
+def dev_root():
+    """Корень API — открытая карточка без ключа: что доступно и как подключиться."""
+    return jsonify(ok=True, service="NetPulse Developer API", api_version="v1",
+                   base_url="https://help.reallyvisuals.cloudpub.ru/api/v1",
+                   auth={"header": "X-NetPulse-Key: sp-test-…",
+                         "alt": "Authorization: Bearer sp-test-… или ?key=sp-test-…",
+                         "where": "Создайте ключ: сайт → Настройки → Developer API"},
+                   endpoints=["/api/v1/info (нужен ключ)","/api/v1/ping?url=","/api/v1/status?url=",
+                              "/api/v1/latency?host=&port=&n=","/api/v1/speed?bytes=&downloads=&upload=",
+                              "/api/v1/trace?url=","/api/v1/dns?host=","/api/v1/whois?domain=",
+                              "/api/v1/search?q=","/api/v1/subnet?cidr=","/api/v1/units?v=&from=&to=",
+                              "/api/v1/ip","/api/v1/uptime?url=&interval_sec="],
+                   example="curl -H 'X-NetPulse-Key: sp-test-…' https://help.reallyvisuals.cloudpub.ru/api/v1/ping?url=https://example.com")
 
 @app.route("/api/v1/info")
 @dev_required
