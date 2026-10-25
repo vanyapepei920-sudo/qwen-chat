@@ -1,120 +1,68 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#070b12" />
-  <title>WebStudio — виртуальный сервер для создания сайтов</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230b1524'/><path d='M18 22 L8 32 L18 42' stroke='%2338e896' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M46 22 L56 32 L46 42' stroke='%23ffb020' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="../css/style.css" />
-  <link rel="stylesheet" href="./css/studio.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Syntheco Studio — конструктор сайтов</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  .studio{display:grid;grid-template-columns:280px 1fr;gap:14px;height:calc(100vh - 120px)}
+  textarea.editor{height:100%;width:100%}
+  iframe.preview{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff}
+  @media(max-width:760px){.studio{grid-template-columns:1fr;height:auto}.editor,.preview{height:40vh}}
+</style>
 </head>
-<body class="studio-body">
-  <div class="bg-grid" aria-hidden="true"></div>
-
-  <header class="topbar">
-    <div class="brand">
-      <svg viewBox="0 0 64 64" class="brand-logo" aria-hidden="true">
-        <path d="M18 22 L8 32 L18 42" stroke="var(--ok)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M46 22 L56 32 L46 42" stroke="var(--warn)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <div>
-        <b>WEBSTUDIO</b>
-        <small>Виртуальный сервер разработки · v1.0</small>
-      </div>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">S</span> Studio</div>
+  <nav class="tabs"><button class="active">✍️ Редактор</button></nav>
+  <div class="userbox"><a class="btn ghost sm" href="../">← Экосистема</a></div>
+</header>
+<main>
+  <div class="studio">
+    <div class="col">
+      <h2>HTML-код сайта</h2>
+      <textarea id="code" class="code editor" spellcheck="false"></textarea>
     </div>
-    <nav class="tabs" role="tablist">
-      <button class="tab active" id="tabProjects">📁 Проекты</button>
-      <button class="tab" id="tabEditor" disabled>⌨ Редактор</button>
-    </nav>
-    <div class="top-actions">
-      <!-- ГЛАВНАЯ КНОПКА: требует только API-ключ -->
-      <button class="btn btn-gh" id="btnPublishTop" title="Опубликовать открытый проект на GitHub Pages — нужен только API-ключ" disabled>
-        <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-.99.08-2.07 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.08.16 1.87.08 2.07.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-        Опубликовать на GitHub
-      </button>
-      <!-- Виртуальный сервер: включите, чтобы всё сохранялось в базе данных -->
-      <button class="btn btn-live" id="btnServer" title="Включить локальный сервер сохранения (IndexedDB)">
-        <span class="pulse-dot"></span><span id="serverLabel">СЕРВЕР ВЫКЛ</span>
-      </button>
-    </div>
-  </header>
-
-  <main class="studio-main">
-    <!-- ═══ ЭКРАН: СПИСОК ПРОЕКТОВ ═══ -->
-    <section class="screen active" id="screenProjects">
-      <div class="projects-head">
-        <h1>Ваши проекты</h1>
-        <p class="hint" id="dbHint">База данных выключена. Чтобы проекты сохранялись автоматически, включите <b>сервер</b> (кнопка справа вверху).</p>
-        <div class="row-btns">
-          <button class="btn btn-primary" id="btnNewProject">＋ Создать проект</button>
-          <button class="btn btn-ghost" id="btnImportDump">Импорт дампа (.json)</button>
-          <input type="file" id="fileImport" accept=".json,application/json" hidden />
-        </div>
+    <div class="col">
+      <div class="row" style="margin-bottom:8px">
+        <button class="btn primary" onclick="renderPreview()">▶ Обновить превью</button>
+        <input id="siteName" class="input grow" placeholder="имя сайта (my-site)">
+        <button class="btn" onclick="publishSite()">🚀 Опубликовать на GitHub Pages</button>
       </div>
-      <div class="project-grid" id="projectGrid"><!-- карточки проектов --></div>
-      <div class="storage-bar card">
-        <h3>Хранилище</h3>
-        <div class="mono" id="storageInfo">—</div>
-        <div class="progress"><i id="storageFill" style="width:0%"></i></div>
-      </div>
-    </section>
-
-    <!-- ═══ ЭКРАН: РЕДАКТОР ═══ -->
-    <section class="screen" id="screenEditor">
-      <div class="editor-wrap">
-        <aside class="filetree card">
-          <header class="card-head">
-            <h2 id="projTitle" title="">Проект</h2>
-          </header>
-          <div class="tree-tools">
-            <button class="btn btn-small" id="btnNewFile" title="Новый файл (можно путь с папкой: css/main.css)">＋ файл</button>
-            <button class="btn btn-small" id="btnZip" title="Скачать весь проект архивом .zip">ZIP ↓</button>
-            <button class="btn btn-small" id="btnSaveAll" title="Принудительно сохранить всё в БД">💾</button>
-          </div>
-          <ul class="tree" id="fileTree"></ul>
-          <footer class="tree-foot mono" id="saveState">готово</footer>
-        </aside>
-
-        <section class="code-pane card">
-          <header class="card-head">
-            <h2 class="mono" id="curFileName">— выберите файл —</h2>
-          </header>
-          <textarea id="codeArea" class="mono" spellcheck="false" placeholder="Выберите файл слева или создайте новый…"></textarea>
-        </section>
-
-        <section class="preview-pane card">
-          <header class="card-head">
-            <h2>Предпросмотр</h2>
-            <button class="btn btn-small btn-primary" id="btnRun">▶ Запустить</button>
-          </header>
-          <iframe id="previewFrame" title="Предпросмотр проекта" sandbox="allow-scripts allow-modals allow-forms"></iframe>
-        </section>
-      </div>
-    </section>
-  </main>
-
-  <!-- модалки и тосты — общие с dashboard-стилями -->
-  <div class="toasts" id="toasts" aria-live="polite"></div>
-  <div class="modal-backdrop" id="modalBackdrop" hidden>
-    <div class="modal card" role="dialog" aria-modal="true">
-      <header class="card-head"><h2 id="modalTitle">Заголовок</h2>
-        <button class="modal-x" id="modalX" aria-label="Закрыть">✕</button></header>
-      <div class="modal-body" id="modalBody"></div>
-      <footer class="modal-foot">
-        <button class="btn btn-ghost" id="modalCancel">Отмена</button>
-        <button class="btn btn-primary" id="modalOk">OK</button>
-        <a class="btn btn-ghost" id="modalLink" hidden target="_blank" rel="noopener">🔗 Открыть сайт</a>
-      </footer>
+      <iframe id="pv" class="preview"></iframe>
     </div>
   </div>
-
-  <script src="../js/utils.js"></script>
-  <script src="./js/store.js"></script>
-  <script src="./js/zip.js"></script>
-  <script src="./js/publish.js"></script>
-  <script src="./js/studio.js"></script>
+</main>
+<div id="toasts"></div>
+<script src="../js/utils.js"></script>
+<script>
+const START = `<!DOCTYPE html>\n<html lang="ru">\n<head>\n<meta charset="utf-8">\n<title>Мой сайт</title>\n<style>body{font-family:sans-serif;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}\nh1{font-size:40px;background:linear-gradient(90deg,#2f81f7,#a371f7);-webkit-background-clip:text;color:transparent}</style>\n</head>\n<body><div><h1>Привет, мир!</h1><p>Мой первый сайт на GitHub Pages.</p></div></body>\n</html>`;
+document.getElementById('code').value = localStorage.getItem('syntheco_site') || START;
+function renderPreview() {
+  localStorage.setItem('syntheco_site', document.getElementById('code').value);
+  document.getElementById('pv').srcdoc = document.getElementById('code').value;
+}
+async function publishSite() {
+  if (!getToken()) return toast('Сначала сохраните GitHub-ключ в Экосистеме (⚙ Настройки)', false);
+  const name = (document.getElementById('siteName').value.trim() || 'my-site').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  try {
+    let me = await gh('/user');
+    try { await gh(`/repos/${me.login}/${name}`); }
+    catch (e) { await gh('/user/repos', { method:'POST', body:{ name, auto_init:true, description:'Syntheco Studio site' } }); }
+    let sha = null;
+    try { sha = (await gh(`/repos/${me.login}/${name}/contents/index.html`)).sha; } catch (e) {}
+    const b64 = btoa(unescape(encodeURIComponent(document.getElementById('code').value)));
+    await gh(`/repos/${me.login}/${name}/contents/index.html`, { method:'PUT', body:{ message:'Studio publish', content:b64, sha } });
+    try { await gh(`/repos/${me.login}/${name}/contents/.nojekyll`, { method:'PUT', body:{ message:'nojekyll', content:'' } }); } catch (e) {}
+    try { await gh(`/repos/${me.login}/${name}/pages`, { method:'POST', body:{ source:{ branch:'main', path:'/' } } }); }
+    catch (e) { await gh(`/repos/${me.login}/${name}/pages`, { method:'PUT', body:{ source:{ branch:'main', path:'/' } } }); }
+    const url = `https://${me.login}.github.io/${name}/`;
+    toast('Опубликовано! Через ~минуту: ' + url);
+    window.open(url, '_blank');
+  } catch (e) { toast('Ошибка: ' + e.message, false); }
+}
+renderPreview();
+</script>
 </body>
 </html>

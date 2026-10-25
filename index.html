@@ -1,440 +1,128 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Синтеко Лаб — интерактивный дашборд промышленного мониторинга IoT: телеметрия в реальном времени, графики, алерты, журнал событий, расчёт KPI." />
-  <meta name="theme-color" content="#070b12" />
-  <title>Синтеко Лаб — IoT-мониторинг производства</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230b1524'/><path d='M10 40 L22 28 L32 36 L54 14' stroke='%2338e896' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='54' cy='14' r='5' fill='%23ffb020'/></svg>" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./css/style.css" />
-  <style id="extraPublishStyles">
-    .pub-progress { height: 8px; border-radius: 6px; background: rgba(120,160,255,.14); margin: .8rem 0 .5rem; overflow: hidden; }
-    .pub-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #38e896, #6ee7ff); transition: width .3s ease; }
-    .pub-log { list-style: none; margin: 0; padding: .5rem .6rem; max-height: 150px; overflow-y: auto; background: #0a111f; border-radius: 10px; font-size: .72rem; color: #9fb4d8; }
-    .pub-log li { padding: .12rem 0; }
-    .modal label { display: block; margin: .55rem 0; font-size: .85rem; }
-    .modal input[type="password"], .modal input[type="text"] { width: 100%; margin-top: .3rem; padding: .55rem .7rem; border-radius: 10px; border: 1px solid rgba(120,160,255,.25); background: #0c1424; color: #e8ecf5; font: inherit; }
-    .modal .chk { display: flex; gap: .5rem; align-items: center; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Syntheco — Экосистема</title>
+<link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
-  <div class="bg-grid" aria-hidden="true"></div>
 
-  <!-- ══════════ TOPBAR ══════════ -->
-  <header class="topbar">
-    <div class="brand">
-      <svg viewBox="0 0 64 64" class="brand-logo" aria-hidden="true">
-        <path d="M10 40 L22 28 L32 36 L54 14" stroke="var(--ok)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="54" cy="14" r="6" fill="var(--warn)"/>
-      </svg>
-      <div>
-        <b>СИНТЕКО&nbsp;ЛАБ</b>
-        <small>Industrial Telemetry Console · v3.2</small>
+<header class="topbar">
+  <div class="brand"><span class="logo">S</span> Syntheco</div>
+  <nav class="tabs" id="tabs"></nav>
+  <div class="userbox">
+    GitHub-ключ: <b id="tokenStatus">не задан</b>
+    <button class="btn ghost sm" onclick="openSettings()">⚙ Настройки</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ГЛАВНАЯ -->
+  <section class="page active" id="page-home">
+    <h1>Экосистема Syntheco</h1>
+    <p class="muted">Один ключ GitHub — все инструменты работают вместе.</p>
+    <div class="grid c3">
+      <article class="card stat"><div class="stat-num" id="stProjects">—</div><div class="stat-lbl">Мои проекты</div></article>
+      <article class="card stat"><div class="stat-num" id="stPublished">—</div><div class="stat-lbl">Опубликовано</div></article>
+      <article class="card stat"><div class="stat-num" id="stGists">—</div><div class="stat-lbl">Gist-сниппеты</div></article>
+    </div>
+    <div class="split mt">
+      <div class="col">
+        <h2>Последние действия</h2>
+        <ul class="list" id="activityList"></ul>
+      </div>
+      <div class="col">
+        <h2>Быстрые ссылки</h2>
+        <a class="btn primary block" href="./studio/" target="_blank">🛠 Открыть Студию сайтов</a>
+        <button class="btn block" onclick="switchTab('projects')">📦 К проектам</button>
+        <button class="btn block" onclick="openSettings()">🔑 Задать GitHub-ключ</button>
       </div>
     </div>
+  </section>
 
-    <nav class="tabs" role="tablist" id="tabs">
-      <button class="tab" role="tab" data-tab="events">Журнал событий <span class="badge" id="badgeEvents" hidden>0</span></button>
-      <button class="tab active" role="tab" data-tab="netmon">📡 Интернет LIVE</button>
-      <button class="tab" role="tab" data-tab="nettools">🌐 Speedtest · GitHub</button>
-      <button class="tab" role="tab" data-tab="websearch">🔎 Поиск в интернете</button>
-      <button class="tab" role="tab" data-tab="netlab">🧪 Сеть-лаборатория</button>
-      <button class="tab" role="tab" data-tab="settings">Настройки</button>
-    </nav>
+  <!-- ПРОЕКТЫ -->
+  <section class="page" id="page-projects">
+    <h1>Проекты</h1>
+    <div class="row">
+      <input id="newRepoName" class="input" placeholder="имя нового репозитория (my-site)">
+      <button class="btn primary" onclick="createProject()">Создать проект</button>
+      <button class="btn" onclick="loadProjects()">⟳ Обновить список</button>
+    </div>
+    <ul class="list big" id="repoList"><li class="muted">Загрузка…</li></ul>
+  </section>
 
-    <div class="top-actions">
-      <form class="omni" id="omniForm" title="Поиск по интернету — Enter (движок: Ctrl+Enter переключает)">
-        <span class="omni-icon">🔎</span>
-        <input id="omniInput" placeholder="Поиск в интернете…" autocomplete="off" />
-        <select id="omniEngine" title="Движок поиска">
-          <option value="google">Google API</option>
-          <option value="ddg">DuckDuckGo</option>
-          <option value="wiki">Wikipedia</option>
-          <option value="gh">GitHub</option>
-          <option value="hn">Hacker News</option>
+  <!-- ПУБЛИКАЦИЯ -->
+  <section class="page" id="page-publish">
+    <h1>Публикация на GitHub Pages</h1>
+    <div class="card">
+      <div class="row">
+        <input id="pubToken" class="input grow" type="password" placeholder="GitHub Personal Access Token (классический, scope: repo + workflow + gist)">
+        <button class="btn primary" onclick="saveToken()">💾 Сохранить ключ</button>
+      </div>
+      <p class="hint">Ключ хранится только в localStorage вашего браузера. Создайте его: github.com → Settings → Developer settings → Tokens → <b>repo</b>, <b>workflow</b>, <b>gist</b>.</p>
+    </div>
+    <div class="split mt">
+      <div class="col card">
+        <h2>1. Загрузить HTML-файл</h2>
+        <input type="file" id="pubFile" accept=".html,.htm,.css,.js,.txt,.md,.json,.svg,.png">
+        <div class="row mt">
+          <input id="pubRepo" class="input grow" placeholder="имя репозитория (создастся авто)">
+          <input id="pubPath" class="input" placeholder="путь (index.html)">
+        </div>
+        <label class="chk"><input type="checkbox" id="pubPages" checked> включить GitHub Pages после загрузки</label>
+        <button class="btn primary block mt" onclick="publishFile()">🚀 Опубликовать</button>
+      </div>
+      <div class="col card">
+        <h2>2. Журнал публикации</h2>
+        <ul class="list log" id="pubLog"><li class="muted">Пока пусто</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- SNIPPETS -->
+  <section class="page" id="page-snippets">
+    <h1>Gist-сниппеты</h1>
+    <div class="card">
+      <div class="row">
+        <input id="snipName" class="input" placeholder="имя файла (snippet.js)">
+        <select id="snipType" class="input">
+          <option value="javascript">JavaScript</option>
+          <option value="html">HTML</option>
+          <option value="css">CSS</option>
+          <option value="python">Python</option>
+          <option value="markdown">Markdown</option>
         </select>
-      </form>
-      <button class="btn btn-ghost nl-alarm-btn" id="nlAlarmBtn" hidden title="Качество связи хуже порогов — открыть Сеть-лабораторию" onclick="document.querySelector('[data-tab=&quot;netlab&quot;]').click()">⚠ связь</button>
-      <div class="clock mono" id="clock">--:--:--</div>
-      <button class="btn btn-live" id="btnLive" title="Пауза / запуск потока данных">
-        <span class="pulse-dot"></span><span id="liveLabel">LIVE</span>
-      </button>
-      <button class="btn btn-primary" id="btnReport">Отчёт</button>
-      <a class="btn btn-ghost" href="./studio/index.html" title="WebStudio — виртуальный сервер для создания сайтов">🛠 WebStudio</a>
-      <button class="btn btn-gh" id="btnPublish" title="Опубликовать этот сайт на GitHub Pages — нужен только API-ключ">
-        <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-.99.08-2.07 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.08.16 1.87.08 2.07.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-        Опубликовать на GitHub
-      </button>
+      </div>
+      <textarea id="snipCode" class="code mt" rows="10" placeholder="// код…"></textarea>
+      <div class="row mt">
+        <label class="chk"><input type="checkbox" id="snipSecret"> секретный</label>
+        <button class="btn primary" onclick="createGist()">+ Создать gist</button>
+      </div>
     </div>
-  </header>
+    <h2 class="mt">Мои gist</h2>
+    <ul class="list big" id="gistList"><li class="muted">Нажмите «Обновить» после сохранения ключа.</li></ul>
+    <button class="btn mt" onclick="loadGists()">⟳ Обновить</button>
+  </section>
 
-  <main class="layout">
-    <!-- ══════════ SIDEBAR ══════════ -->
-    <aside class="sidebar">
-      <div class="side-block">
-        <h3>Сеть сейчас</h3>
-        <ul class="shop-list" id="netSideList">
-          <li><span>Приём ↓</span><b class="mono" id="sideDown">—</b></li>
-          <li><span>Отдача ↑</span><b class="mono" id="sideUp">—</b></li>
-          <li><span>Пинг</span><b class="mono" id="sidePing">—</b></li>
-          <li><span>Потери</span><b class="mono" id="sideLoss">—</b></li>
-        </ul>
-      </div>
-      <div class="side-block">
-        <h3>Качество сигнала</h3>
-        <div class="signal-meter" id="signalMeter"></div>
-        <p class="side-note">Средняя задержка канала: <b class="mono" id="latencyVal">— мс</b></p>
-      </div>
-      <div class="side-block">
-        <h3>Быстрые действия</h3>
-        <div class="quick-actions">
-          <button class="btn btn-ghost" id="qaSnapshot">Снимок сети</button>
-          <button class="btn btn-ghost" id="qaTestNow">Полный speedtest</button>
-          <button class="btn btn-ghost" id="qaStudio">Открыть WebStudio</button>
-        </div>
-      </div>
-      <div class="side-block uptime">
-        <h3>Аптайм сессии</h3>
-        <div class="mono big" id="uptimeVal">00:00:00</div>
-        <div class="progress"><i id="slaBar" style="width:0%"></i></div>
-        <p class="side-note">Статус канала: <b id="slaVal">—</b></p>
-      </div>
-    </aside>
+</main>
 
-    <!-- ══════════ CONTENT ══════════ -->
-    <section class="content" id="content">
-
-      <!-- ── TAB: EVENTS ── -->
-      <div class="panel" id="panel-events">
-        <article class="card">
-          <header class="card-head">
-            <h2>Журнал событий</h2>
-            <div class="event-tools">
-              <input type="search" id="evSearch" placeholder="Поиск по описанию…" />
-              <select id="evLevel" class="select">
-                <option value="all">Все уровни</option>
-                <option value="info">INFO</option>
-                <option value="warn">WARN</option>
-                <option value="error">ERROR</option>
-                <option value="crit">CRIT</option>
-              </select>
-              <select id="evSort" class="select">
-                <option value="time-desc">Сначала новые</option>
-                <option value="time-asc">Сначала старые</option>
-                <option value="level">По уровню</option>
-              </select>
-              <button class="btn btn-small" id="evExport">CSV ↓</button><button class="btn btn-small" id="evPrev">←</button><button class="btn btn-small" id="evNext">→</button>
-            </div>
-          </header>
-          <div class="table-wrap">
-            <table class="table" id="eventTable">
-              <thead><tr>
-                <th>Время</th><th>Уровень</th><th>Событие</th>
-              </tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <footer class="table-foot">
-            <span class="mono" id="evFoot">0 событий</span>
-            <div class="pager" id="eventPager"></div>
-          </footer>
-        </article>
-      </div>
-
-      <!-- ── TAB: INTERNET LIVE MONITOR ── -->
-      <div class="panel active" id="panel-netmon">
-        <div class="row">
-          <article class="card st-card">
-            <header class="card-head"><h2>📡 Живой монитор интернета — сигнал, отдача и приём в реальном времени</h2>
-              <button class="btn btn-primary" id="nmToggle">▶ Запустить мониторинг</button></header>
-            <div class="nm-grid">
-              <div class="nm-gauge-wrap">
-                <canvas id="nmGauge" width="240" height="160"></canvas>
-                <div class="mono nm-sig-val" id="nmSigVal">—%</div>
-                <small>качество сигнала (пинг + потери)</small>
-              </div>
-              <div class="nm-cells">
-                <div class="st-cell"><small>PING ↓ ПРИЁМ</small><b class="mono" id="nmPing">— мс</b></div>
-                <div class="st-cell"><small>JITTER</small><b class="mono" id="nmJitter">— мс</b></div>
-                <div class="st-cell"><small>ПОТЕРИ</small><b class="mono" id="nmLoss">— %</b></div>
-                <div class="st-cell big"><small>DOWNLOAD ↓ ПРИНИМАЕТ</small><b class="mono" id="nmDown">— Мбит/с</b>
-                  <em class="mono" id="nmDownLive"></em></div>
-                <div class="st-cell big"><small>UPLOAD ↑ ОТДАЁТ</small><b class="mono" id="nmUp">— Мбит/с</b>
-                  <em class="mono" id="nmUpLive"></em></div>
-                <div class="st-cell"><small>СТАТУС</small><b class="mono" id="nmOnline" style="color:#3ee0a4">● В сети</b></div>
-              </div>
-            </div>
-            <div class="nm-hosts-row" id="nmHosts"></div>
-            <div class="nm-vol">
-              <span>Принято за цикл: <b class="mono" id="nmDownTotal">0 МБ</b></span>
-              <span>Отдано за цикл: <b class="mono" id="nmUpTotal">0 МБ</b></span>
-              <span>IP / провайдер: <b class="mono" id="nmIp">н/д</b> <small id="nmGeo"></small></span>
-            </div>
-            <canvas id="nmSignalSpark" width="700" height="70" style="width:100%"></canvas>
-          </article>
-
-          <article class="card st-card">
-            <header class="card-head"><h2>История замеров (каждые ~30 с)</h2></header>
-            <div class="table-wrap">
-              <table class="table">
-                <thead><tr><th>Время</th><th>Пинг</th><th>Jitter</th><th>↓ Приём</th><th>↑ Отдача</th><th>Сигнал</th></tr></thead>
-                <tbody id="nmHistBody"></tbody>
-              </table>
-            </div>
-          </article>
-        </div>
-      </div>
-
-      <!-- ── TAB: NETTOOLS ── -->
-      <div class="panel" id="panel-nettools">
-        <div class="row">
-          <!-- ═══ SPEEDTEST ═══ -->
-          <article class="card st-card">
-            <header class="card-head"><h2>🌐 Speedtest — проверка скорости интернета</h2>
-              <button class="btn btn-primary" id="stRun">▶ Запустить тест</button></header>
-            <div class="st-grid">
-              <div class="st-gauge-wrap"><canvas id="stGauge" width="260" height="170"></canvas></div>
-              <div class="st-results">
-                <div class="st-cell"><small>PING</small><b class="mono" id="stPing">— мс</b></div>
-                <div class="st-cell"><small>JITTER</small><b class="mono" id="stJitter">— мс</b></div>
-                <div class="st-cell"><small>ПОТЕРИ</small><b class="mono" id="stLoss">— %</b></div>
-                <div class="st-cell big"><small>DOWNLOAD ↓</small><b class="mono" id="stDown">— Мбит/с</b></div>
-                <div class="st-cell big"><small>UPLOAD ↑</small><b class="mono" id="stUp">— Мбит/с</b></div>
-                <div class="st-cell"><small>ОЦЕНКА</small><b class="mono" id="stGrade">—</b></div>
-              </div>
-            </div>
-            <div class="pub-track"><div class="pub-fill" id="stProgFill" style="width:0%"></div></div>
-            <p class="hint mono" id="stPhase">Готов. Тест использует Cloudflare Speed edge и GitHub CDN (HTTP-замеры, как speed.cloudflare.com).</p>
-            <p class="hint mono">live: ↓ <span id="stDlLive">—</span> · ↑ <span id="stUlLive">—</span> · последний пинг: <span id="stPingLast">—</span></p>
-            <p class="hint" id="stIsp"></p>
-            <details open><summary class="hint">История замеров (последние 20)</summary><div id="stHistory"></div></details>
-          </article>
-
-          <!-- ═══ GITHUB TOOLS ═══ -->
-          <article class="card">
-            <header class="card-head"><h2>🐙 GitHub Tools — стороние функции GitHub</h2></header>
-            <div class="gt-bar">
-              <select id="gtKind" class="input">
-                <option value="search">Поиск репозиториев</option>
-                <option value="profile">Профиль пользователя</option>
-                <option value="release">Релизы репозитория</option>
-                <option value="issues-open">Issues (открытые)</option>
-                <option value="issues-closed">Issues (закрытые)</option>
-                <option value="tree">Дерево файлов репо</option>
-              </select>
-              <input id="gtQuery" class="input" placeholder="например: react  ·  @torvalds  ·  microsoft/vscode" />
-              <button class="btn btn-primary" id="gtGo">Выполнить</button>
-            </div>
-            <div class="gt-token">
-              <input id="gtToken" type="password" class="input" placeholder="API-ключ для звёзд / форков / gist / коммитов (необязательно)" autocomplete="off"/>
-              <button class="btn btn-ghost" id="gtTokenSave">💾 Проверить и сохранить ключ</button>
-            </div>
-            <div id="gtResults" class="gt-results"><p class="hint">Публичные операции работают без ключа. Для «In stars», «Fork», gist и записи коммитов ключ запросится автоматически.</p></div>
-
-            <details><summary class="hint">✍ Быстрый gist (нужен ключ со scope gist)</summary>
-              <div class="form-grid">
-                <input id="gtGistDesc" class="input" placeholder="описание" />
-                <input id="gtGistFile" class="input" placeholder="имя файла (snippet.js)" />
-                <label class="chk"><input id="gtGistPublic" type="checkbox" checked /> публичный</label>
-              </div>
-              <textarea id="gtGistCode" class="input mono" rows="4" placeholder="// код…"></textarea>
-              <button class="btn btn-small btn-primary" id="gtMakeGist">Создать gist</button>
-            </details>
-
-            <details><summary class="hint">📝 Коммит файла в любой свой репозиторий (Contents RW)</summary>
-              <div class="form-grid">
-                <input id="gtCommitRepo" class="input" placeholder="owner/repo" />
-                <input id="gtCommitBranch" class="input" placeholder="main" />
-                <input id="gtCommitFile" class="input" placeholder="docs/note.md" />
-                <input id="gtCommitMsg" class="input" placeholder="commit message" />
-                <label class="chk"><input id="gtCommitUpdate" type="checkbox" checked /> обновлять если существует</label>
-              </div>
-              <textarea id="gtCommitText" class="input mono" rows="3" placeholder="содержимое файла…"></textarea>
-              <button class="btn btn-small btn-primary" id="gtCommitBtn">Закоммитить →</button>
-            </details>
-          </article>
-        </div>
-      </div>
-
-      <!-- ── TAB: WEB SEARCH ── -->
-      <div class="panel" id="panel-websearch">
-        <div class="row">
-          <article class="card st-card">
-            <header class="card-head"><h2>🔎 Поиск в интернете — Google API, DuckDuckGo, Wikipedia</h2></header>
-            <div class="gt-bar">
-              <select id="wsEngine" class="input">
-                <option value="ddg">DuckDuckGo (без ключа)</option>
-                <option value="google">Google Custom Search (нужен ключ)</option>
-                <option value="wiki">Wikipedia (без ключа)</option>
-                <option value="gh">GitHub репозитории (без ключа)</option>
-                <option value="hn">Hacker News (без ключа)</option>
-              </select>
-              <input id="wsQuery" class="input" placeholder="поисковый запрос…" />
-              <button class="btn btn-primary" id="wsGo">Искать</button>
-            </div>
-            <details class="ws-keys"><summary class="hint">🔑 Ключи Google Custom Search API</summary>
-              <div class="form-grid">
-                <input id="wsGKey" type="password" class="input" placeholder="API key (console.cloud.google.com → Custom Search JSON API)" autocomplete="off"/>
-                <input id="wsGCx" class="input" placeholder="Search Engine ID (cx), пример: a1b2c3..." />
-                <button class="btn btn-ghost" id="wsKeysSave">💾 Сохранить ключи</button>
-              </div>
-              <p class="hint">Бесплатно 100 запросов/день. Создайте CSE на programmablesearchengine.google.com и включите Custom Search JSON API.</p>
-            </details>
-            <div id="wsResults" class="gt-results ws-results"><p class="hint">Введите запрос — результаты появятся здесь. Быстрые ссылки:</p>
-              <div class="ws-quick" id="wsQuick"></div>
-            </div>
-            <p class="hint mono" id="wsMeta"></p>
-          </article>
-
-          <article class="card">
-            <header class="card-head"><h2>🧰 Интернет-функции</h2></header>
-            <div class="ws-tools" id="wsTools">
-              <button class="btn btn-ghost wt" data-tool="dns">🌍 DNS: myip / ipinfo.io</button>
-              <button class="btn btn-ghost wt" data-tool="geo">📍 Геолокация по IP (ipapi.co)</button>
-              <button class="btn btn-ghost wt" data-tool="isp">🏢 Мой провайдер и ASN</button>
-              <button class="btn btn-ghost wt" data-tool="headers">📦 HTTP-заголовки ответа example.com</button>
-              <button class="btn btn-ghost wt" data-tool="latency">⚡ Задержка до 6 серверов мира</button>
-              <button class="btn btn-ghost wt" data-tool="mtu">📐 Проверка MTU / размера полезной нагрузки</button>
-              <button class="btn btn-ghost wt" data-tool="connectivity">🔌 Тест доступности хоста</button>
-              <button class="btn btn-ghost wt" data-tool="httpstatus">🚦 Проверка кода ответа URL</button>
-              <button class="btn btn-ghost wt" data-tool="throughput">🚚 Пропускная способность (стрим 5 МБ)</button>
-              <button class="btn btn-ghost wt" data-tool="jitter2">📈 Джиттер 20 замеров подряд</button>
-            </div>
-            <pre class="mono ws-out" id="wsOut">Выберите функцию слева ↑ — результат появится здесь.</pre>
-          </article>
-        </div>
-      </div>
-
-      <!-- ── TAB: NET LAB — расширенные тесты, мониторинги, параметры ── -->
-      <div class="panel" id="panel-netlab">
-        <div class="row">
-          <article class="card st-card">
-            <header class="card-head"><h2>🧪 Сеть-лаборатория — 12 тестов и параметров</h2>
-              <span class="hint mono" id="nlHint">все тесты работают без установки и ключей</span></header>
-            <div class="ws-tools nl-tools" id="nlTools">
-              <button class="btn btn-ghost wt" data-tool="speedtest">🚀 Быстрый speedtest (30 с)</button>
-              <button class="btn btn-ghost wt" data-tool="trace">🗺 Trace задержки по регионам</button>
-              <button class="btn btn-ghost wt" data-tool="bwpoll">📊 Замер пропускной способности 60 с</button>
-              <button class="btn btn-ghost wt" data-tool="browser">🌐 Параметры браузера и соединения</button>
-              <button class="btn btn-ghost wt" data-tool="storage">💾 Доступное хранилище (Storage Mgmt)</button>
-              <button class="btn btn-ghost wt" data-tool="media">🎥 Годность для стрима / звонка</button>
-              <button class="btn btn-ghost wt" data-tool="dnssec">🔐 DNS через Cloudflare / Google</button>
-              <button class="btn btn-ghost wt" data-tool="httpver">📡 HTTP/2 push + TLS-рукопожатие</button>
-              <button class="btn btn-ghost wt" data-tool="lossburst">📉 Потери пакетов: серия из 30</button>
-              <button class="btn btn-ghost wt" data-tool="uplatency">⏱ Latency под upload-нагрузкой</button>
-              <button class="btn btn-ghost wt" data-tool="proxy">🕵️ Детект VPN / прокси / дата-центра</button>
-              <button class="btn btn-ghost wt" data-tool="uptime">🟢 Uptime-монитор сайта (фоновый)</button>
-            </div>
-            <pre class="mono ws-out nl-out" id="nlOut">Выберите тест ↑ — результат появится здесь.</pre>
-          </article>
-
-          <div class="col">
-            <article class="card st-card">
-              <header class="card-head"><h2>📈 Непрерывный мониторинг канала</h2></header>
-              <div class="nm-cells nl-cells">
-                <div class="st-cell"><small>Мин пинг</small><b class="mono" id="nlPingMin">—</b></div>
-                <div class="st-cell"><small>Средн. пинг</small><b class="mono" id="nlPingAvg">—</b></div>
-                <div class="st-cell"><small>Макс пинг</small><b class="mono" id="nlPingMax">—</b></div>
-                <div class="st-cell"><small>Потери всего</small><b class="mono" id="nlLossTotal">—</b></div>
-                <div class="st-cell"><small>Циклов замеров</small><b class="mono" id="nlCycles">0</b></div>
-                <div class="st-cell"><small>Трафик сессии ↓↑</small><b class="mono" id="nlTraffic">0 МБ</b></div>
-              </div>
-              <canvas id="nlChart" width="640" height="150" style="width:100%"></canvas>
-              <p class="hint mono" id="nlChartMeta">пинг по всем хостам · последние 90 замеров</p>
-            </article>
-            <article class="card">
-              <header class="card-head"><h2>⚙️ Параметры сети и тестов</h2></header>
-              <div class="settings-list nl-settings">
-                <label class="switch-row"><span>Период live-монитора</span>
-                  <select id="nlPeriod" class="select">
-                    <option value="1500">1.5 с</option><option value="2500" selected>2.5 с</option>
-                    <option value="5000">5 с</option><option value="10000">10 с</option>
-                  </select></label>
-                <label class="switch-row"><span>Объём download-замера</span>
-                  <select id="nlDlBytes" class="select">
-                    <option value="1048576">1 МБ</option><option value="4194304" selected>4 МБ</option>
-                    <option value="10485760">10 МБ</option>
-                  </select></label>
-                <label class="switch-row"><span>Хосты ping-панели</span>
-                  <select id="nlHosts" class="select">
-                    <option value="3" selected>3 (быстро)</option><option value="6">6 (полные)</option>
-                  </select></label>
-                <label class="switch-row"><span>Автопауза live-монитора в фоне</span>
-                  <input type="checkbox" id="nlAutoPause" checked /></label>
-                <label class="switch-row"><span>Порог тревоги: пинг &gt;</span>
-                  <input type="number" id="nlAlarmPing" class="input num" value="150" min="10" max="2000" /> мс</label>
-                <label class="switch-row"><span>Порог тревоги: сигнал &lt;</span>
-                  <input type="number" id="nlAlarmSig" class="input num" value="45" min="1" max="99" /> %</label>
-                <label class="chk switch-row"><input type="checkbox" id="nlBeepAlarm" /> звуковой сигнал тревоги</label>
-              </div>
-              <button class="btn btn-primary" id="nlApplyParams">Применить параметры</button>
-              <button class="btn btn-danger" id="nlResetStats">Сбросить статистику</button>
-            </article>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel" id="panel-settings">
-        <div class="row row-set">
-          <article class="card">
-            <header class="card-head"><h2>Интерфейс и данные</h2></header>
-            <div class="settings-list">
-              <label class="switch-row"><span>Плотная таблица событий</span>
-                <input type="checkbox" id="setDense" /></label>
-              <label class="switch-row"><span>Звуковые уведомления об ERROR/CRIT</span>
-                <input type="checkbox" id="setSound" checked /></label>
-              <label class="switch-row"><span>Показывать сетку на графиках</span>
-                <input type="checkbox" id="setGrid" checked /></label>
-              <label class="switch-row"><span>Google API key (Custom Search JSON)</span>
-                <input type="password" id="setGKey" class="input num wide" placeholder="ключ из console.cloud.google.com" autocomplete="off" /></label>
-              <label class="switch-row"><span>Search Engine ID (cx)</span>
-                <input type="text" id="setGCx" class="input num wide" placeholder="ID поисковика CSE" /></label>
-              <label class="switch-row"><span>GitHub API-ключ (публикация, star/fork/gist)</span>
-                <input type="password" id="setGhToken" class="input num wide" placeholder="github_pat_… / ghp_…" autocomplete="off" /></label>
-              <label class="switch-row"><span>Включён ли сервер БД WebStudio</span>
-                <b class="mono" id="setServerState">—</b></label>
-            </div>
-            <button class="btn btn-primary" id="setSaveKeys">💾 Сохранить ключи</button>
-            <hr/>
-            <button class="btn btn-danger" id="btnWipe">Очистить историю замеров и журнал</button>
-          </article>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <!-- ══════════ TOASTS ══════════ -->
-  <div class="toasts" id="toasts" aria-live="polite"></div>
-
-  <!-- ══════════ MODAL ══════════ -->
-  <div class="modal-backdrop" id="modalBackdrop" hidden>
-    <div class="modal card" role="dialog" aria-modal="true">
-      <header class="card-head"><h2 id="modalTitle">Подтверждение</h2>
-        <button class="modal-x" id="modalX" aria-label="Закрыть">✕</button></header>
-      <div class="modal-body" id="modalBody"></div>
-      <footer class="modal-foot">
-        <button class="btn btn-ghost" id="modalCancel">Отмена</button>
-        <button class="btn btn-primary" id="modalOk">Подтвердить</button>
-        <a class="btn btn-ghost" id="modalLink" hidden target="_blank" rel="noopener">🔗 Открыть сайт</a>
-      </footer>
+<!-- МОДАЛ -->
+<div class="modal-back" id="modalBack" hidden>
+  <div class="modal">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="row end">
+      <button class="btn ghost" onclick="closeModal()">Отмена</button>
+      <button class="btn primary" id="modalOk">OK</button>
     </div>
   </div>
+</div>
 
-  <footer class="site-foot mono">
-    СИНТЕКО Лаб · живой мониторинг интернета и консоль разработки · замеры выполняются напрямую из браузера, без сервера
-  </footer>
+<div id="toasts"></div>
 
-  <script src="./js/utils.js"></script>
-  <script src="./js/charts.js"></script>
-  <script src="./js/dashboard.js"></script>
-  <script src="./js/publish.js"></script>
-  <script src="./js/nettest.js"></script>
-  <script src="./js/netmonitor.js"></script>
-  <script src="./js/websearch.js"></script>
-  <script src="./js/netlab.js"></script>
+<script src="./js/utils.js"></script>
+<script src="./js/app.js"></script>
 </body>
 </html>
