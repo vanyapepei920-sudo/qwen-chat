@@ -68,3 +68,11 @@ python app.py
 - ~~requests~~ → собственный HTTP-клиент на `urllib.request` (`HttpResponse`, `_Session`) с GET/POST/HEAD, редиректами, стримингом и JSON
 - ~~authlib~~ → Google OAuth 2.0 вручную: authorize-redirect + обмен кода на токен через TLS (`urllib`), разбор id_token (`base64`/`json`), защита CSRF-параметром `state` (`secrets`)
 - ~~python-dotenv~~ → встроенный мини-парсер `.env` (`load_dotenv()` на `os.environ`)
+
+
+## ⚡ Speedtest REAL v3
+- Настоящий движок: 8 параллельных потоков download / 4 upload, ramp-up
+- Реальные test-серверы Cloudflare по городам мира + автовыбор ближайшего (geo + ping)
+- Ручной выбор сервера («Change Server») с замером пинга
+- Gauge-спидометр, live-график, вердикт A+…F, видео-профиль
+- Поделиться результатом: ссылка + картинка-постер; история localStorage + сервер

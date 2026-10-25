@@ -126,7 +126,7 @@ var DASH = (() => {
 
   function bindEvents() {
     $("#qaSnapshot")?.addEventListener("click", () => $("#btnReport").click());
-    $("#qaTestNow")?.addEventListener("click", () => { document.querySelector('[data-tab="nettools"]').click(); setTimeout(() => $("#stRunPro")?.click(), 150); });
+    $("#qaTestNow")?.addEventListener("click", () => { document.querySelector('[data-tab="nettools"]').click(); setTimeout(() => $("#stRunReal")?.click(), 150); });
     $("#qaStudio")?.addEventListener("click", () => { location.href = "studio/index.html"; });
     $("#evSearch").addEventListener("input", e => { ui.evSearch = e.target.value.toLowerCase(); ui.eventsPage = 0; renderEvents(); });
     $("#evLevel").addEventListener("change", e => { ui.evLevel = e.target.value; ui.eventsPage = 0; renderEvents(); });

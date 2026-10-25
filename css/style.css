@@ -470,3 +470,35 @@ textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
   transition: border-color .2s; }
 .spx-mini .st-cell:hover { border-color: rgba(53,196,255,.4); }
 @media (max-width: 760px) { .spx-hero { grid-template-columns: 1fr; } .spx-mini { grid-template-columns: 1fr 1fr; } }
+
+/* ═══ SPEEDNET REAL v3 ═══ */
+.spx-head-right{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.spx-hero{display:grid;grid-template-columns:minmax(240px,1fr) auto;gap:1.2rem;align-items:center;margin:1rem 0}
+.spx-gauge-wrap{position:relative;width:100%;aspect-ratio:1.55/1;max-width:480px;margin:0 auto}
+#stGauge{width:100%;height:100%;display:block}
+.spx-gauge-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.spx-gauge-center b{font-size:clamp(34px,7vw,64px);line-height:1;background:linear-gradient(180deg,#eafff5,#9fe8c8);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 30px rgba(62,224,164,.35)}
+.spx-gauge-center .st-unit{font-style:normal;font-weight:700;color:#7d93ad;font-size:.95rem;margin-top:.2rem}
+.spx-side{display:grid;grid-template-columns:repeat(2,minmax(110px,1fr));gap:.6rem}
+.spx-results{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;margin:1rem 0 .4rem}
+.res-box{border-radius:14px;padding:1rem 1.2rem;background:rgba(15,22,40,.55);border:1px solid rgba(110,130,165,.16);position:relative;overflow:hidden}
+.res-box.dl::after,.res-box.ul::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px}
+.res-box.dl::after{background:linear-gradient(90deg,#3ee0a4,#7ee06a)}
+.res-box.ul::after{background:linear-gradient(90deg,#6ea8ff,#c86bff)}
+.res-box small{display:block;color:#7d93ad;font-weight:700;letter-spacing:.08em;font-size:.72rem}
+.res-box b{font-size:clamp(26px,4.5vw,40px);display:block;margin:.15rem 0}
+.res-box.dl b{color:#3ee0a4}.res-box.ul b{color:#6ea8ff}
+.res-box span{color:#6c81a8;font-size:.8rem}
+.st-modal{position:fixed;inset:0;background:rgba(5,8,18,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:60;padding:1rem}
+.st-modal-box{width:min(560px,100%);max-height:80vh;overflow:auto;background:#0e1526;border:1px solid rgba(110,130,165,.22);border-radius:18px;padding:1.2rem;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.st-modal-box header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem}
+.st-modal-box h3{margin:0;font-size:1.05rem}
+.srv-list{display:flex;flex-direction:column;gap:.4rem;margin:.8rem 0}
+.srv-row{display:flex;justify-content:space-between;align-items:center;gap:1rem;width:100%;text-align:left;padding:.65rem .9rem;border-radius:10px;border:1px solid rgba(110,130,165,.16);background:rgba(15,22,40,.5);color:#dbe6f7;cursor:pointer;transition:.15s}
+.srv-row:hover{border-color:#38e896;box-shadow:0 0 18px rgba(56,232,150,.18);transform:translateX(2px)}
+.srv-row small{color:#7d93ad}
+.st-modal-box footer{display:flex;justify-content:space-between;gap:.6rem}
+#stShareCard{margin-top:1rem;padding:1rem;border-radius:14px;border:1px dashed rgba(110,130,165,.3);background:rgba(15,22,40,.4)}
+#stPoster{width:100%;max-width:640px;border-radius:10px;display:block;margin-bottom:.6rem}
+.shared-box{margin-top:.8rem;padding:.8rem 1rem;border-radius:12px;background:rgba(110,168,255,.08);border:1px solid rgba(110,168,255,.25)}
+@media (max-width:760px){.spx-hero{grid-template-columns:1fr}.spx-side{grid-template-columns:repeat(4,1fr)}.spx-results{grid-template-columns:1fr}}

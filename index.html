@@ -192,15 +192,20 @@
       <!-- ── TAB: NETTOOLS ── -->
       <div class="panel" id="panel-nettools">
         <div class="row">
-          <!-- ═══ SPEEDTEST PRO v2 ═══ -->
+          <!-- ═══ SPEEDNET REAL v3 ═══ -->
           <article class="card st-card spx">
             <header class="card-head">
-              <h2>⚡ Speedtest <span class="spx-badge">PRO v2</span> <small class="hint">· сервер: <b id="stServer">не выбран</b></small></h2>
-              <button class="btn btn-primary spx-run" id="stRunPro">▶ Запустить тест</button>
+              <h2>⚡ Speedtest <span class="spx-badge">REAL v3</span></h2>
+              <div class="spx-head-right">
+                <button class="btn btn-ghost" id="stChangeServer">🌐 Сервер: <b id="stServerName">авто</b></button>
+                <button class="btn btn-primary spx-run" id="stRunReal">▶ Запустить тест</button>
+              </div>
             </header>
 
+            <p class="hint mono" id="stGeo"></p>
+
             <div class="spx-steps" id="stSteps">
-              <span class="st-step" data-step="1">Edge</span>
+              <span class="st-step" data-step="1">Server</span>
               <span class="st-step" data-step="2">Ping</span>
               <span class="st-step" data-step="3">Download</span>
               <span class="st-step" data-step="4">Upload</span>
@@ -208,15 +213,18 @@
             </div>
 
             <div class="spx-hero">
-              <div class="spx-big dl">
-                <small>DOWNLOAD ↓</small>
-                <b class="mono idle" id="stDownBig">—</b><em class="st-unit">Мбит/с</em>
-                <span class="spx-sub">peak: <b class="mono" id="stDownPeak">—</b> Мбит/с</span>
+              <div class="spx-gauge-wrap">
+                <canvas id="stGauge"></canvas>
+                <div class="spx-gauge-center">
+                  <b class="mono" id="stBigVal">—</b>
+                  <em class="st-unit" id="stBigUnit">Мбит/с</em>
+                </div>
               </div>
-              <div class="spx-big ul">
-                <small>UPLOAD ↑</small>
-                <b class="mono idle" id="stUpBig">—</b><em class="st-unit">Мбит/с</em>
-                <span class="spx-sub">потоков: 4 параллельно</span>
+              <div class="spx-side">
+                <div class="st-cell"><small>PING</small><b class="mono"><span id="stPingV">—</span> мс</b></div>
+                <div class="st-cell"><small>JITTER</small><b class="mono"><span id="stJitterV">—</span> мс</b></div>
+                <div class="st-cell"><small>ПОТЕРИ</small><b class="mono"><span id="stLossV">—</span> %</b></div>
+                <div class="st-cell"><small>ОЦЕНКА</small><b class="mono"><span id="stGradeV">—</span> <small id="stScoreV" class="hint"></small></b></div>
               </div>
             </div>
 
@@ -224,19 +232,41 @@
               <canvas id="stLiveChart"></canvas>
             </div>
 
-            <div class="spx-mini">
-              <div class="st-cell"><small>PING</small><b class="mono"><span id="stPingV">—</span> мс</b></div>
-              <div class="st-cell"><small>JITTER</small><b class="mono"><span id="stJitterV">—</span> мс</b></div>
-              <div class="st-cell"><small>ПОТЕРИ</small><b class="mono"><span id="stLossV">—</span> %</b></div>
-              <div class="st-cell"><small>ОЦЕНКА</small><b class="mono" id="stGradeV">—</b></div>
+            <div class="pub-track"><div class="pub-fill" id="stProgFill" style="width:0%"></div></div>
+            <p class="hint mono" id="stPhase">Готов. Настоящий speedtest: 8 параллельных потоков, автовыбор ближайшего сервера (Cloudflare: Москва, Франкфурт, Лондон…), спидометр, вердикт.</p>
+            <p class="hint mono">live ↓ <span id="stDlLive">—</span> · live ↑ <span id="stUlLive">—</span> · пинг: <span id="stPingLast">—</span></p>
+
+            <div class="hidden" id="stResults">
+              <div class="spx-results">
+                <div class="res-box dl"><small>DOWNLOAD ↓</small><b class="mono" id="stDownFinal">—</b><span>Мбит/с · peak <span id="stDownPeak">—</span></span></div>
+                <div class="res-box ul"><small>UPLOAD ↑</small><b class="mono" id="stUpFinal">—</b><span>Мбит/с · peak <span id="stUpPeak">—</span></span></div>
+              </div>
+              <p class="hint" id="stVideo">🎬 —</p>
+              <p class="hint" id="stUse">💡 —</p>
             </div>
 
-            <div class="pub-track"><div class="pub-fill" id="stProgFill" style="width:0%"></div></div>
-            <p class="hint mono" id="stPhase">Готов. 4 параллельных соединения, автовыбор ближайшего edge (Cloudflare / jsDelivr / GitHub / Google), live-график, оценка канала.</p>
-            <p class="hint mono">live: ↓ <span id="stDlLive">—</span> · ↑ <span id="stUlLive">—</span> · последний пинг: <span id="stPingLast">—</span></p>
-            <p class="hint" id="stVideo">Видео-профиль: —</p>
-            <p class="hint mono" id="stConnInfo"></p>
-            <details open><summary class="hint">История замеров (последние 20)</summary><div id="stHistory"></div></details>
+            <div class="hidden" id="stActions">
+              <button class="btn btn-ghost" id="stShareBtn">📤 Поделиться результатом</button>
+            </div>
+            <div class="hidden" id="stShareCard">
+              <canvas id="stPoster" width="640" height="360"></canvas>
+              <input class="input" id="stShareLink" readonly />
+              <p class="hint mono" id="stShareHint"></p>
+              <button class="btn btn-ghost" id="stHideShare">Закрыть</button>
+            </div>
+            <div class="hidden" id="stSharedResult"></div>
+
+            <details open><summary class="hint">История замеров v3 (последние 20)</summary><div id="stHistory"></div></details>
+
+            <!-- модалка выбора сервера -->
+            <div class="st-modal hidden" id="stServerModal">
+              <div class="st-modal-box">
+                <header><h3>🌐 Выбор test-сервера</h3><button class="btn btn-ghost" id="stCloseModal">✕</button></header>
+                <p class="hint">Кликните сервер — измерится пинг и он станет основным. Или верните автовыбор.</p>
+                <div class="srv-list" id="stServerList"></div>
+                <footer><button class="btn btn-primary" id="stPickAuto">↩ Автовыбор ближайшего</button></footer>
+              </div>
+            </div>
           </article>
 
           <!-- ═══ GITHUB TOOLS ═══ -->
@@ -458,7 +488,7 @@
   <script src="./js/dashboard.js"></script>
   <script src="./js/publish.js"></script>
   <script src="./js/nettest.js"></script>
-  <script src="./js/speedtest.js"></script>
+  <script src="./js/speedtest3.js"></script>
   <script src="./js/netmonitor.js"></script>
   <script src="./js/websearch.js"></script>
   <script src="./js/netlab.js"></script>

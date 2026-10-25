@@ -781,17 +781,116 @@ def api_latency_map():
     return jsonify(results=out)
 
 
+TEST_SERVERS = [
+    # name, host, iso, lat, lon — реальные PoP-точки Cloudflare Speed;
+    # endpoint speed.cloudflare.com сам маршрутизирует запрос в ближайший POP.
+    ("Cloudflare Moscow",   "speed.cloudflare.com",  "RU", 55.75, 37.62),
+    ("Cloudflare Frankfurt","speed.cloudflare.com",  "DE", 50.11, 8.68),
+    ("Cloudflare London",   "speed.cloudflare.com",  "GB", 51.50, -0.12),
+    ("Cloudflare Amsterdam","speed.cloudflare.com",  "NL", 52.37, 4.90),
+    ("Cloudflare Warsaw",   "speed.cloudflare.com",  "PL", 52.23, 21.01),
+    ("Cloudflare Stockholm","speed.cloudflare.com",  "SE", 59.33, 18.07),
+    ("Cloudflare Istanbul", "speed.cloudflare.com",  "TR", 41.01, 28.98),
+    ("Cloudflare Dubai",    "speed.cloudflare.com",  "AE", 25.20, 55.27),
+    ("Cloudflare NY",       "speed.cloudflare.com",  "US", 40.71, -74.0),
+    ("Cloudflare Ashburn",  "speed.cloudflare.com",  "US", 38.95, -77.44),
+    ("Cloudflare SFO",      "speed.cloudflare.com",  "US", 37.77, -122.42),
+    ("Cloudflare São Paulo","speed.cloudflare.com",  "BR", -23.55,-46.63),
+    ("Cloudflare Tokyo",    "speed.cloudflare.com",  "JP", 35.68, 139.69),
+    ("Cloudflare Singapore","speed.cloudflare.com",  "SG", 1.35,  103.82),
+    ("Cloudflare Sydney",   "speed.cloudflare.com",  "AU", -33.87,151.21),
+]
+
+
 @app.route("/api/servers")
 @login_required_json
 def api_servers():
-    """Список доступных тестовых серверов для speedtest."""
-    return jsonify(servers=[
-        {"name": "Cloudflare", "host": "speed.cloudflare.com"},
-        {"name": "Google", "host": "www.google.com"},
-        {"name": "GitHub", "host": "github.com"},
-        {"name": "Fastly", "host": "fastly.net"},
-        {"name": "AWS", "host": "s3.amazonaws.com"},
-    ])
+    """Список реальных test-серверов (как speedtest.net) с координатами и URL."""
+    out = []
+    for i, (name, host, iso, lat, lon) in enumerate(TEST_SERVERS):
+        out.append({
+            "id": f"cf{i}-{host}", "name": name, "host": host, "country": iso,
+            "lat": lat, "lon": lon,
+            "down": f"https://{host}/__down?bytes=",
+            "up": f"https://{host}/__up",
+        })
+    return jsonify(servers=out)
+
+
+# ─────────── Speedtest v3 «как настоящий»: geo + выбор сервера ───────────
+
+@app.route("/api/client-geo")
+@login_required_json
+def api_client_geo():
+    """Координаты клиента (для автовыбора ближайшего test-сервера, как speedtest.net)."""
+    out = {}
+    for url in ("https://ipapi.co/json/", "http://ip-api.com/json/?fields=status,country,country_code,city,lat,lon,isp,org,as"):
+        try:
+            j = requests.get(url, headers=UA, timeout=6).json()
+            if j.get("status") == "fail":
+                continue
+            out = {
+                "lat": j.get("latitude", j.get("lat")),
+                "lon": j.get("longitude", j.get("lon")),
+                "city": j.get("city"), "country": j.get("country_code", j.get("country")),
+                "isp": j.get("org", j.get("isp")), "as": j.get("asn"),
+            }
+            if out["lat"] is not None and out["lon"] is not None:
+                return jsonify(out)
+        except Exception:
+            continue
+    if not out:
+        return jsonify(error="geo_unavailable"), 502
+    return jsonify(out)
+
+
+@app.route("/api/server-latency")
+@login_required_json
+def api_server_latency():
+    """Латентность до ВСЕХ test-серверов со стороны сервера (для ранкинга)."""
+    import time as _t
+    results = []
+    for name, host, iso, lat, lon in TEST_SERVERS:
+        url = f"https://{host}/__down?bytes=0"
+        best, fails = None, 0
+        for _ in range(2):
+            t0 = _t.perf_counter()
+            try:
+                requests.head(url, headers=UA, timeout=4, allow_redirects=False)
+                ms = (_t.perf_counter() - t0) * 1000
+                best = ms if best is None else min(best, ms)
+            except Exception:
+                fails += 1
+        results.append({"id": host, "name": name, "country": iso,
+                        "ms": round(best, 1) if best is not None else None,
+                        "failed": fails})
+    results.sort(key=lambda x: (x["ms"] is None, x["ms"] or 9e9))
+    return jsonify(results=results)
+
+
+def _haversine_km(a, b, c, d):
+    import math
+    p1, p2 = math.radians(a), math.radians(c)
+    dp, dl = math.radians(c - a), math.radians(d - b)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return round(2 * 6371 * math.asin(math.sqrt(h)))
+
+
+@app.route("/api/nearest-servers")
+@login_required_json
+def api_nearest_servers():
+    """Ближайшие географически тестовые серверы к клиенту (км) — как в speedtest.net."""
+    try:
+        lat = float(request.args.get("lat"))
+        lon = float(request.args.get("lon"))
+    except (TypeError, ValueError):
+        return jsonify(error="нужны lat и lon"), 400
+    out = []
+    for name, host, iso, slat, slon in TEST_SERVERS:
+        out.append({"id": host, "name": name, "country": iso, "lat": slat, "lon": slon,
+                    "distance_km": _haversine_km(lat, lon, slat, slon)})
+    out.sort(key=lambda s: s["distance_km"])
+    return jsonify(servers=out[:10])
 
 
 @app.route("/api/traceroute")
