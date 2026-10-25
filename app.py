@@ -25,7 +25,11 @@ def _env(name, default=""):
     """Читает переменную окружения; значения всегда берутся из .env / env, не из кода."""
     return os.environ.get(name) or os.getenv(name, default) or ""
 
-GOOGLE_CLIENT_ID      = _env("GOOGLE_CLIENT_ID")
+def genv(name, default=""):
+    """Google-настройки читаются из .env в МОМЕНТ запроса — можно менять без рестарта."""
+    return os.environ.get(name) or os.getenv(name, default) or default
+
+GOOGLE_CLIENT_ID      = _env("GOOGLE_CLIENT_ID")       # снимок на старте (для логов)
 GOOGLE_CLIENT_SECRET  = _env("GOOGLE_CLIENT_SECRET")
 GOOGLE_SEARCH_API_KEY = _env("GOOGLE_SEARCH_API_KEY")
 GOOGLE_SEARCH_CX      = _env("GOOGLE_SEARCH_CX")
@@ -57,6 +61,15 @@ app.config["SECRET_KEY"] = SECRET_KEY
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=SESSION_HOURS)
 CORS(app, supports_credentials=True,
      origins=[f"http://{HOST}:{PORT}", "http://localhost:5000", "http://127.0.0.1:5000"])
+
+# Публичный Developer API (/api/v1) доступен с ЛЮБОГО сайта (ключи npk_ вместо cookies)
+@app.after_request
+def _cors_devapi(resp):
+    if request.path.startswith("/api/v1/"):
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-NetPulse-Key, Authorization"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return resp
 
 # ---------------- БД ----------------
 def get_db():
@@ -95,10 +108,24 @@ def init_db():
     CREATE TABLE IF NOT EXISTS api_tokens(
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
         label TEXT, token_hash TEXT UNIQUE NOT NULL, created_at TEXT, last_used TEXT);
+    CREATE TABLE IF NOT EXISTS dev_keys(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+        name TEXT, key_hash TEXT UNIQUE NOT NULL, secret TEXT DEFAULT '',
+        scopes TEXT DEFAULT 'basic', active INTEGER DEFAULT 1,
+        rate_limit INTEGER DEFAULT 60, created_at TEXT, last_used TEXT, calls INTEGER DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS key_usage(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key_id INTEGER NOT NULL, ts INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_tests_user ON tests(user_id, ts DESC);
     CREATE INDEX IF NOT EXISTS idx_res_monitor ON monitor_results(monitor_id, ts DESC);
     CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_key ON key_usage(key_id, ts DESC);
     """)
+    # миграция: добавляем недостающие колонки (если таблица создана старой версией)
+    for tbl, col, decl in [("dev_keys","secret","TEXT DEFAULT ''"),
+                           ("dev_keys","calls","INTEGER DEFAULT 0")]:
+        cols = [r[1] for r in db.execute(f"PRAGMA table_info({tbl})").fetchall()]
+        if col not in cols:
+            db.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
     db.commit(); db.close()
     log.info("БД готова: %s", DB_PATH)
 
@@ -107,14 +134,14 @@ def verify_google_token(token):
     try:
         if HAVE_GOOGLE_AUTH:
             info = _g_id_token.verify_oauth2_token(
-                token, _g_requests.Request(), audience=GOOGLE_CLIENT_ID)
+                token, _g_requests.Request(), audience=genv("GOOGLE_CLIENT_ID"))
         else:
             r = http_lib.get("https://oauth2.googleapis.com/tokeninfo",
                              params={"id_token": token}, timeout=10)
             if r.status_code != 200: return None
             info = r.json()
             if int(info.get("exp", 0)) < time.time(): return None
-        if info.get("aud") != GOOGLE_CLIENT_ID: return None
+        if info.get("aud") != genv("GOOGLE_CLIENT_ID"): return None
         return {"sub": info.get("sub"), "name": info.get("name"),
                 "email": info.get("email"), "picture": info.get("picture"),
                 "email_verified": info.get("email_verified", False)}
@@ -163,12 +190,12 @@ def root():
 @app.route("/login")
 def login():
     if session.get("user"): return redirect(url_for("dashboard"))
-    return render_template("login.html", google_client_id=GOOGLE_CLIENT_ID, page="login")
+    return render_template("login.html", google_client_id=genv("GOOGLE_CLIENT_ID"), page="login")
 
 @app.route("/register")
 def register():
     if session.get("user"): return redirect(url_for("dashboard"))
-    return render_template("register.html", google_client_id=GOOGLE_CLIENT_ID, page="register")
+    return render_template("register.html", google_client_id=genv("GOOGLE_CLIENT_ID"), page="register")
 
 PAGES = {"dashboard":"Дашборд","ping":"Пинг","traceroute":"Трассировка","dns":"DNS",
          "wifi":"Wi‑Fi","search":"Поиск","history":"История","monitor":"Мониторинг",
@@ -258,7 +285,8 @@ def prefs_set():
 @app.route("/api/search")
 @login_required
 def api_search():
-    if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_CX:
+    key, cx = genv("GOOGLE_SEARCH_API_KEY"), genv("GOOGLE_SEARCH_CX")
+    if not key or not cx:
         return jsonify(ok=False, error="search_not_configured",
                        hint="Заполните GOOGLE_SEARCH_API_KEY и GOOGLE_SEARCH_CX в .env"), 503
     q = (request.args.get("q") or "").strip()
@@ -266,7 +294,7 @@ def api_search():
     mode = request.args.get("mode", "web")
     start = max(1, int(request.args.get("start", 1)))
     try:
-        params = {"key": GOOGLE_SEARCH_API_KEY, "cx": GOOGLE_SEARCH_CX,
+        params = {"key": key, "cx": cx,
                   "q": q, "start": start, "num": 10, "safe": "active"}
         if mode == "image": params["searchType"] = "image"
         r = http_lib.get("https://www.googleapis.com/customsearch/v1", params=params, timeout=15)
@@ -296,7 +324,8 @@ def api_search():
 @app.route("/api/health")
 def health():
     return jsonify(ok=True, service="netpulse", google_auth=HAVE_GOOGLE_AUTH,
-                   search=bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX),
+                   search=bool(genv("GOOGLE_SEARCH_API_KEY") and genv("GOOGLE_SEARCH_CX")),
+                   google_login=bool(genv("GOOGLE_CLIENT_ID")),
                    time=datetime.now().isoformat(timespec="seconds"))
 
 # ============ НОВЫЕ ФУНКЦИИ ============
@@ -541,6 +570,283 @@ def tokens_revoke(tid):
     db = get_db(); t = db.execute("SELECT id FROM api_tokens WHERE id=? AND user_id=?",(tid, session["user"]["db_id"])).fetchone()
     if not t: return jsonify(ok=False, error="not_found"), 404
     db.execute("DELETE FROM api_tokens WHERE id=?",(tid,)); db.commit(); return jsonify(ok=True)
+
+# ============ ПУБЛИЧНЫЙ DEVELOPER API (/api/v1) ============
+# Ключи создаются в Настройках → «Developer API». Используются с ЛЮБОГО сайта/скрипта:
+#   fetch("https://ваш-netpulse/api/v1/ping?url=https://example.com",
+#         {headers:{'X-NetPulse-Key':'npk_...'}})
+DEV_SCOPES = {"basic": ["ping","status"], "net": ["dns","whois"], "search": ["search"]}
+
+def _dev_auth():
+    """Ищет dev-ключ в заголовке X-NetPulse-Key / Authorization Bearer npk_ / ?key="""
+    raw = (request.headers.get("X-NetPulse-Key") or "").strip()
+    if not raw:
+        hdr = request.headers.get("Authorization","")
+        if hdr.startswith("Bearer npk_"): raw = hdr.split(None,1)[1].strip()
+    if not raw: raw = (request.args.get("key") or "").strip()
+    if not raw or not raw.startswith("npk_"): return None, None
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    db = get_db()
+    k = db.execute("SELECT * FROM dev_keys WHERE key_hash=?", (h,)).fetchone()
+    if not k or not k["active"]: return None, "invalid_key"
+    now_ms = int(time.time()*1000)
+    # rate limit: скользящее окно 60 сек
+    cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
+                     (k["id"], now_ms-60000)).fetchone()["c"]
+    if cnt >= k["rate_limit"]: return None, "rate_limited"
+    db.execute("INSERT INTO key_usage(key_id,ts) VALUES(?,?)", (k["id"], now_ms))
+    db.execute("UPDATE dev_keys SET last_used=?, calls=calls+1 WHERE id=?",
+               (datetime.now().isoformat(timespec="seconds"), k["id"]))
+    db.commit()
+    u = db.execute("SELECT id,name,email FROM users WHERE id=?", (k["user_id"],)).fetchone()
+    return {"key": dict(k), "user": dict(u)}, None
+
+def dev_required(fn):
+    @wraps(fn)
+    def w(*a, **k):
+        auth, err = _dev_auth()
+        if not auth:
+            hint = {"invalid_key":"Ключ не найден или отозван. Создайте новый в Настройках → Developer API.",
+                    "rate_limited":"Превышен лимит запросов (см. Rate limit ключа)."}
+            return jsonify(ok=False, error=err or "missing_key",
+                           hint=hint.get(err, "Передайте ключ: заголовок 'X-NetPulse-Key: npk_…' или ?key=npk_…")), \
+                   429 if err=="rate_limited" else 401
+        g.dev = auth; return fn(*a, **k)
+    return w
+
+def _dev_scope(name):
+    sc = (g.dev["key"]["scopes"] or "basic").split(",")
+    allowed = [e for s in sc for e in DEV_SCOPES.get(s, [])]
+    if name not in allowed:
+        return jsonify(ok=False, error="scope_denied", scope=name,
+                       hint="Добавьте scope '%s' при создании ключа (пересоздайте ключ)." %
+                            next((s for s,e in DEV_SCOPES.items() if name in e), name)), 403
+    return None
+
+@app.route("/api/v1/info")
+@dev_required
+def dev_info():
+    k = g.dev["key"]
+    return jsonify(ok=True, key_name=k["name"], scopes=k["scopes"].split(","),
+                   rate_limit_per_min=k["rate_limit"], total_calls=k["calls"],
+                   owner=g.dev["user"].get("name"), api_version="v1",
+                   endpoints=["/api/v1/info","/api/v1/ping?url=","/api/v1/status?url=",
+                              "/api/v1/dns?host=","/api/v1/whois?domain=","/api/v1/search?q=",
+                              "/api/v1/subnet?cidr=","/api/v1/units?v=&from=&to=",
+                              "/api/v1/ip","/api/v1/uptime?url=&interval_sec="])
+
+@app.route("/api/v1/ping")
+@dev_required
+def dev_ping():
+    denied = _dev_scope("ping")
+    if denied: return denied
+    url = (request.args.get("url") or "").strip()
+    host = (request.args.get("host") or "").strip()
+    if url and not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
+    t0=time.perf_counter()
+    try:
+        import socket
+        if url:
+            r = http_lib.head(url, timeout=8, allow_redirects=True, headers={"User-Agent":"NetPulseAPI/1.0"})
+            lat=(time.perf_counter()-t0)*1000
+            return jsonify(ok=True, target=url, reachable=True, status=r.status_code, latency_ms=round(lat,1))
+        ip = socket.gethostbyname(host)
+        s = socket.create_connection((ip, int(request.args.get("port", 80))), timeout=5); s.close()
+        return jsonify(ok=True, target=host, ip=ip, reachable=True,
+                       latency_ms=round((time.perf_counter()-t0)*1000,1))
+    except Exception as e:
+        return jsonify(ok=True, target=url or host, reachable=False, error=str(e)[:200])
+
+@app.route("/api/v1/status")
+@dev_required
+def dev_status():
+    denied = _dev_scope("status")
+    if denied: return denied
+    url = (request.args.get("url") or "").strip()
+    if not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
+    res = _check_url(url)
+    return jsonify(ok=True, url=url, **res)
+
+@app.route("/api/v1/dns")
+@dev_required
+def dev_dns():
+    denied = _dev_scope("dns")
+    if denied: return denied
+    host = (request.args.get("host") or "").strip()
+    if not re.match(r"^[A-Za-z0-9.\-]{1,253}$", host): return jsonify(ok=False, error="bad_host"), 400
+    import socket
+    recs = {}
+    try:
+        infos = socket.getaddrinfo(host, None)
+        recs["A"]  = sorted({i[4][0] for i in infos if i[0]==socket.AF_INET})
+        recs["AAAA"]= sorted({i[4][0] for i in infos if i[0]==socket.AF_INET6})
+    except Exception as e:
+        return jsonify(ok=True, host=host, error=str(e)[:200], records={})
+    return jsonify(ok=True, host=host, records=recs)
+
+@app.route("/api/v1/whois")
+@dev_required
+def dev_whois():
+    denied = _dev_scope("whois")
+    if denied: return denied
+    domain = (request.args.get("domain") or "").strip().lower()
+    if not re.match(r"^[a-z0-9.\-]{2,253}$", domain): return jsonify(ok=False, error="bad_domain"), 400
+    try:
+        import whois
+        w = whois.whois(domain)
+        d = {k: (v.isoformat() if hasattr(v,"isoformat") else v)
+             for k,v in (w.__dict__ if hasattr(w,"__dict__") else {}).items() if v}
+        return jsonify(ok=True, domain=domain, whois=d)
+    except ImportError:
+        return jsonify(ok=False, error="whois_not_installed", hint="pip install python-whois"), 501
+    except Exception as e:
+        return jsonify(ok=False, domain=domain, error=str(e)[:200])
+
+@app.route("/api/v1/search")
+@dev_required
+def dev_search():
+    denied = _dev_scope("search")
+    if denied: return denied
+    key, cx = genv("GOOGLE_SEARCH_API_KEY"), genv("GOOGLE_SEARCH_CX")
+    if not key or not cx:
+        return jsonify(ok=False, error="search_not_configured",
+                       hint="На сервере не заполнены GOOGLE_SEARCH_API_KEY/CX в .env"), 503
+    q = (request.args.get("q") or "").strip()[:200]
+    if not q: return jsonify(ok=False, error="empty_query"), 400
+    params = {"key": key, "cx": cx, "q": q, "num": min(10,int(request.args.get("num",10) or 10)), "safe":"active"}
+    if request.args.get("mode") == "image": params["searchType"]="image"
+    r = http_lib.get("https://www.googleapis.com/customsearch/v1", params=params, timeout=15)
+    data = r.json()
+    items = [{"title":i["title"],"link":i["link"],"snippet":i.get("snippet","")}
+             for i in data.get("items",[])]
+    return jsonify(ok=True, query=q, count=len(items), results=items)
+
+@app.route("/api/v1/subnet")
+@dev_required
+def dev_subnet_api():
+    cidr = (request.args.get("cidr") or "").strip()
+    m = re.match(r"^(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,2})$", cidr)
+    if not m: return jsonify(ok=False, error="bad_cidr", example="192.168.1.10/24"), 400
+    import ipaddress
+    try: net = ipaddress.ip_network(f"{m.group(1)}/{m.group(2)}", strict=False)
+    except ValueError as e: return jsonify(ok=False, error=str(e)), 400
+    hosts = list(net.hosts())
+    return jsonify(ok=True, cidr=str(net), network=str(net.network_address),
+                   netmask=str(net.netmask), broadcast=str(net.broadcast_address),
+                   prefixlen=net.prefixlen, total_addresses=net.num_addresses,
+                   usable_hosts=max(0, net.num_addresses-2),
+                   first_host=str(hosts[0]) if hosts else None,
+                   last_host=str(hosts[-1]) if hosts else None)
+
+@app.route("/api/v1/units")
+@dev_required
+def dev_units_api():
+    val = request.args.get("v"); frm = request.args.get("from","mbps"); to = request.args.get("to","auto")
+    try: val=float(val)
+    except (TypeError,ValueError): return jsonify(ok=False, error="bad_value"), 400
+    SPEED={"bps":1,"kbps":1e3,"mbps":1e6,"gbps":1e9,"MB/s":8e6,"KB/s":8e3}
+    SIZE={"B":1,"KB":1024,"MB":1024**2,"GB":1024**3,"TB":1024**4}
+    table = SPEED if frm in SPEED else SIZE
+    if frm not in table: return jsonify(ok=False, error="bad_unit", units=list(table)), 400
+    base = val*table[frm]
+    out = {u: base/t for u,t in table.items()}
+    if to=="auto":
+        u=list(table); i=0
+        while i<len(u)-1 and out[u[i]]>=1000*(1024 if table is SIZE else 1): i+=1
+        best=u[i]
+        return jsonify(ok=True, value=val, unit=frm, result=round(out[best],4), best_unit=best, all=out)
+    if to not in table: return jsonify(ok=False, error="bad_target"), 400
+    return jsonify(ok=True, value=val, unit=frm, to=to, result=round(out[to],6))
+
+@app.route("/api/v1/ip")
+@dev_required
+def dev_ip():
+    fwd = request.headers.get("X-Forwarded-For","")
+    client = (fwd.split(",")[0].strip() if fwd else request.remote_addr) or ""
+    geo=None
+    if request.args.get("geo")=="1" and client:
+        try: geo = http_lib.get(f"http://ip-api.com/json/{client}?fields=status,country,regionName,city,isp", timeout=6).json()
+        except Exception: pass
+    return jsonify(ok=True, ip=client, user_agent=request.headers.get("User-Agent","")[:200], geo=geo)
+
+@app.route("/api/v1/uptime", methods=["GET"])
+@dev_required
+def dev_uptime_get():
+    denied = _dev_scope("status")
+    if denied: return denied
+    uid = g.dev["user"]["id"]; db = get_db()
+    mons = db.execute("SELECT id,url,name,interval_sec,enabled FROM monitors WHERE user_id=?",(uid,)).fetchall()
+    out=[]
+    for mo in mons:
+        st = db.execute("SELECT COUNT(*) c, SUM(ok) up FROM monitor_results WHERE monitor_id=? AND ts>?",
+                        (mo["id"], int(time.time()*1000)-86400000)).fetchone()
+        last = db.execute("SELECT ok,status,latency_ms,ts FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 1",(mo["id"],)).fetchone()
+        out.append({**dict(mo), "uptime_24h": round(100*st["up"]/st["c"],2) if st["c"] else None,
+                    "checks_24h": st["c"], "last": dict(last) if last else None})
+    return jsonify(ok=True, monitors=out)
+
+@app.route("/api/v1/uptime", methods=["POST"])
+@dev_required
+def dev_uptime_add():
+    denied = _dev_scope("status")
+    if denied: return denied
+    d = request.values if request.method=="POST" and request.is_json is False else (request.get_json(silent=True) or request.values)
+    url = (d.get("url") or "").strip()
+    if not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
+    interval = max(60, min(3600, int(d.get("interval_sec", 300) or 300)))
+    db = get_db()
+    cur = db.execute("INSERT INTO monitors(user_id,url,name,interval_sec,created_at) VALUES(?,?,?,?,?)",
+        (g.dev["user"]["id"], url, (d.get("name") or url)[:80], interval, datetime.now().isoformat(timespec="seconds")))
+    db.commit(); mid = cur.lastrowid
+    res = _check_url(url); now=int(time.time()*1000)
+    db.execute("INSERT INTO monitor_results(monitor_id,ts,ok,status,latency_ms,error) VALUES(?,?,?,?,?,?)",
+        (mid, now, 1 if res["ok"] else 0, res["status"], res["latency_ms"], res.get("error")))
+    db.execute("UPDATE monitors SET last_check=? WHERE id=?",(now,mid)); db.commit()
+    return jsonify(ok=True, id=mid, result=res)
+
+# --- управление dev-ключами (нужен вход через Google, cookies) ---
+@app.route("/api/devkeys", methods=["GET"])
+@login_required
+def devkeys_list():
+    rows = get_db().execute(
+        "SELECT id,name,key_prefix,scopes,active,rate_limit,created_at,last_used,calls FROM ("
+        "SELECT id,'npk_'||substr(hex(key_hash),1,4)||'…'||substr(hex(key_hash),-4) key_prefix,"
+        "scopes,active,rate_limit,created_at,last_used,calls FROM dev_keys WHERE user_id=?) ORDER BY id DESC",
+        (session["user"]["db_id"],)).fetchall()
+    return jsonify(ok=True, keys=[dict(r) for r in rows])
+
+@app.route("/api/devkeys", methods=["POST"])
+@login_required
+def devkeys_create():
+    d = request.get_json(silent=True) or {}
+    name = (d.get("name") or "api key")[:60]
+    scopes = d.get("scopes") or ["basic"]
+    if isinstance(scopes, str): scopes = [x for x in scopes.split(",") if x]
+    scopes = [s for s in scopes if s in DEV_SCOPES] or ["basic"]
+    rl = max(5, min(600, int(d.get("rate_limit", 60) or 60)))
+    raw = "npk_" + secrets.token_urlsafe(30)
+    secret = secrets.token_hex(16)
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    get_db().execute("INSERT INTO dev_keys(user_id,name,key_hash,secret,scopes,rate_limit,created_at) VALUES(?,?,?,?,?,?,?)",
+        (session["user"]["db_id"], name, h, secret, ",".join(scopes), rl, datetime.now().isoformat(timespec="seconds")))
+    get_db().commit()
+    return jsonify(ok=True, key=raw, secret=secret, note="Показаны один раз — сохраните сейчас")
+
+@app.route("/api/devkeys/<int:kid>/toggle", methods=["POST"])
+@login_required
+def devkeys_toggle(kid):
+    db=get_db(); k=db.execute("SELECT id,active FROM dev_keys WHERE id=? AND user_id=?",(kid,session["user"]["db_id"])).fetchone()
+    if not k: return jsonify(ok=False, error="not_found"), 404
+    db.execute("UPDATE dev_keys SET active=? WHERE id=?",(0 if k["active"] else 1,kid)); db.commit()
+    return jsonify(ok=True, active=not bool(k["active"]))
+
+@app.route("/api/devkeys/<int:kid>", methods=["DELETE"])
+@login_required
+def devkeys_delete(kid):
+    db=get_db(); k=db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?",(kid,session["user"]["db_id"])).fetchone()
+    if not k: return jsonify(ok=False, error="not_found"), 404
+    db.execute("DELETE FROM key_usage WHERE key_id=?",(kid,)); db.execute("DELETE FROM dev_keys WHERE id=?",(kid,))
+    db.commit(); return jsonify(ok=True)
 
 def auth_via_token():
     """Bearer np_… для /openapi/*"""

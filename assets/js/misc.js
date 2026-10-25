@@ -41,6 +41,42 @@
     $('#setWipeServer').onclick=async()=>{if(!confirm('Удалить историю с сервера?'))return;await K.History.clear();K.toast('Серверная история удалена','ok',2200);};
     fetch('/api/health').then(r=>r.json()).then(j=>{$('#setHealth').innerHTML='ok · google-auth:'+(j.google_auth?'yes':'fallback')+' · search:'+(j.search?'yes':'no');}).catch(()=>$('#setHealth').textContent='недоступен');
 
+    /* --- Developer API ключи (npk_) --- */
+    const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    async function loadKeys(){const j=await fetch('/api/devkeys',{credentials:'include'}).then(r=>r.json());
+      if(!j.ok)return;
+      $('#dkBody').innerHTML=j.keys.length?j.keys.map(k=>'<tr><td>'+esc(k.name)+'</td>'+
+        '<td style="font-family:var(--mono);font-size:12px">'+esc(k.key_prefix||'')+'</td>'+
+        '<td>'+(k.scopes||'basic').split(',').map(s=>'<span class="badge mid">'+esc(s)+'</span>').join(' ')+'</td>'+
+        '<td>'+k.rate_limit+'/мин</td><td>'+(k.calls||0)+'</td><td>'+esc(k.last_used||'никогда')+'</td>'+
+        '<td style="text-align:right;white-space:nowrap">'+
+        '<button class="btn sm ghost" data-tog="'+k.id+'" data-on="'+(k.active?1:0)+'">'+(k.active?'⏸ Выкл':'▶ Вкл')+'</button> '+
+        '<button class="btn sm ghost danger" data-del="'+k.id+'">✕</button></td></tr>').join('')
+        :'<tr><td colspan="7" class="empty">Ключей пока нет — создайте первый</td></tr>';
+    }
+    $('#dkForm').onsubmit=async e=>{e.preventDefault();
+      const scopes=[...document.querySelectorAll('#dkForm input.chk:checked')].map(i=>i.value);
+      const j=await fetch('/api/devkeys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:$('#dkName').value||'api key',scopes,rate_limit:Number($('#dkRate').value)})}).then(r=>r.json());
+      if(j.ok){const box=$('#dkNew');box.hidden=false;
+        box.innerHTML='<div class="kv"><div class="k">Новый ключ <b>(показан один раз!)</b></div>'+
+          '<div class="v" style="font-family:var(--mono);word-break:break-all">'+esc(j.key)+
+          ' <button class="btn sm" id="dkCopyKey">Копировать</button></div>'+
+          '<div class="k">Webhook secret (для подписи callback-ов)</div>'+
+          '<div class="v" style="font-family:var(--mono);word-break:break-all">'+esc(j.secret)+
+          ' <button class="btn sm" id="dkCopySec">Копировать</button></div></div>';
+        $('#dkCopyKey').onclick=()=>{navigator.clipboard.writeText(j.key);K.toast('Ключ скопирован','ok',1500);};
+        $('#dkCopySec').onclick=()=>{navigator.clipboard.writeText(j.secret);K.toast('Secret скопирован','ok',1500);};
+        $('#dkName').value='';loadKeys();}
+    };
+    $('#dkBody').onclick=async e=>{
+      const t=e.target.closest('[data-tog]'), d=e.target.closest('[data-del]');
+      if(t){await fetch('/api/devkeys/'+t.dataset.tog+'/toggle',{method:'POST',credentials:'include'});loadKeys();}
+      if(d){if(!confirm('Удалить ключ навсегда?'))return;
+        await fetch('/api/devkeys/'+d.dataset.del,{method:'DELETE',credentials:'include'});loadKeys();}
+    };
+    loadKeys();
+
     /* --- API-токены --- */
     async function loadTokens(){const j=await fetch('/api/tokens',{credentials:'include'}).then(r=>r.json());
       if(!j.ok)return;

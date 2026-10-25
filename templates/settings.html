@@ -26,6 +26,42 @@
     <button class="btn danger" id="setWipeServer" style="width:100%">Удалить историю с сервера</button>
   </section>
   <section class="card glass col-12">
+    <div class="card-h"><h3>🧑‍💻 Developer API — свои ключи для ваших сайтов</h3><div class="spacer"></div>
+      <span class="tag">npk_… · CORS открыт</span></div>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 10px">Создайте ключ и используйте наши эндпоинты со <b>своего</b> сайта или скрипта: ping, статус URL, DNS, whois, поиск Google, подсети, единицы, uptime-мониторинг. Ключ передаётся заголовком <code style="font-family:var(--mono)">X-NetPulse-Key</code>.</p>
+    <form class="s-form" id="dkForm" autocomplete="off" style="flex-wrap:wrap;gap:8px">
+      <input class="inp" id="dkName" placeholder="Название (например «мой сайт»)">
+      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="basic" checked> basic (ping/status)</label>
+      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="net"> net (dns/whois)</label>
+      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="search"> search (Google)</label>
+      <select id="dkRate" class="sel" title="Лимит запросов в минуту">
+        <option value="30">30 зап./мин</option><option value="60" selected>60 зап./мин</option>
+        <option value="120">120 зап./мин</option><option value="300">300 зап./мин</option></select>
+      <button class="btn" type="submit">＋ Создать ключ</button>
+    </form>
+    <div id="dkNew" hidden style="margin:10px 0"></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Название</th><th>Ключ</th><th>Scopes</th><th>Лимит</th><th>Запросов</th><th>Использовался</th><th></th></tr></thead>
+      <tbody id="dkBody"><tr><td colspan="7" class="empty">Загрузка…</td></tr></tbody></table></div>
+    <details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px;color:var(--muted)">📖 Примеры использования на своём сайте</summary>
+      <pre style="font-family:var(--mono);font-size:12px;overflow:auto;background:rgba(0,0,0,.25);padding:12px;border-radius:8px">// JavaScript — с любого сайта:
+const r = await fetch("https://ВАШ-NETPULSE/api/v1/ping?url=https://example.com",
+  {headers:{"X-NetPulse-Key":"npk_ВАШ_КЛЮЧ"}});
+const j = await r.json();  // {ok:true, reachable:true, latency_ms:42.1}
+
+// curl / Python:
+//   GET /api/v1/status?url=https://site.ru     — up/down, HTTP-код, задержка
+//   GET /api/v1/dns?host=site.ru               — A/AAAA записи
+//   GET /api/v1/whois?domain=site.ru           — данные регистратора
+//   GET /api/v1/search?q=новости&mode=web      — Google Custom Search
+//   GET /api/v1/subnet?cidr=10.0.0.0/24        — разбор подсети
+//   GET /api/v1/units?v=100&from=mbps&to=auto  — конвертер единиц
+//   GET /api/v1/ip?geo=1                       — IP клиента + гео
+//   GET /api/v1/uptime                         — ваши мониторы и uptime%
+//   POST /api/v1/uptime  {url, interval_sec}   — добавить монитор
+//   GET /api/v1/info                           — инфо о ключе</pre>
+    </details>
+  </section>
+  <section class="card glass col-12">
     <div class="card-h"><h3>🔑 API‑токены (openapi)</h3><div class="spacer"></div>
       <span class="tag">для curl и скриптов</span></div>
     <form class="s-form" id="tokForm" autocomplete="off">
