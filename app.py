@@ -649,8 +649,10 @@ def _dev_auth():
     if not (raw.startswith("sp-") or raw.startswith("npk_")): return None, None
     db = get_db()
     if not _db_ready(db):                    # если хранилище ещё не инициализировано — создаём его на лету
-        try: init_db()
-        except Exception as e: log.warning("auto init_db failed: %s", e)
+        try:
+            init_db(); db.execute("SELECT 1 FROM dev_keys LIMIT 1")
+        except Exception as e:
+            log.warning("auto init_db failed: %s", e)
     if raw in ENV_API_KEYS:                  # ключ из переменных окружения (для деплоя)
         return {"key": _env_key_row(raw), "user": {"id": 0, "name": "API", "email": ""}}, None
     h = hashlib.sha256(raw.encode()).hexdigest()
@@ -677,6 +679,8 @@ def _dev_auth():
                (datetime.now().isoformat(timespec="seconds"), k["id"]))
     db.commit()
     u = db.execute("SELECT id,name,email FROM users WHERE id=?", (k["user_id"],)).fetchone()
+    if u is None:                            # пользователь удалён/не найден — не падаем (было dict(None))
+        u = {"id": k["user_id"], "name": "API", "email": ""}
     return {"key": dict(k), "user": dict(u)}, None
 
 def dev_required(fn):
@@ -1474,12 +1478,24 @@ def openapi_ping(host):
     except Exception as e:
         return jsonify(ok=False, host=host, error=str(e)[:200])
 
+def _json_err_page(code):
+    """Для API-запросов отдаём JSON вместо HTML-страницы ошибки (и не падаем, если шаблона нет)."""
+    if request.path.startswith("/api/"):
+        msg = {403: "Forbidden", 404: "Not found", 500: "Internal server error"}[code]
+        return jsonify(ok=False, error="server_error" if code == 500 else "not_found",
+                       code=code, message=msg), code
+    tpl = {403: "403.html", 404: "404.html", 500: "500.html"}[code]
+    try:
+        return render_template(tpl), code
+    except Exception:
+        return jsonify(ok=False, code=code), code
+
 @app.errorhandler(403)
-def e403(_e): return render_template("403.html"), 403
+def e403(_e): return _json_err_page(403)
 @app.errorhandler(404)
-def e404(_e): return render_template("404.html"), 404
+def e404(_e): return _json_err_page(404)
 @app.errorhandler(500)
-def e500(_e): return render_template("500.html"), 500
+def e500(_e): return _json_err_page(500)
 
 if __name__ == "__main__":
     init_db()
