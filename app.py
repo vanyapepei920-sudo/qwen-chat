@@ -1260,6 +1260,116 @@ def _assistant_call(history, user_text):
                 time.sleep(1.2 * (attempt + 1))
     raise RuntimeError(f"Помощник временно недоступен (сетевой сбой). Повторите вопрос через пару секунд. [{str(last_err)[:80]}]")
 
+
+def _assistant_stream(history, user_text):
+    """Генератор: отдаёт текст ответа по мере написания (SSE-стриминг).
+    Пробует адреса из assistant_api_urls(); первый же успешный стримится до конца."""
+    model = genv("ASSISTANT_MODEL", "openai")
+    messages = [{"role": "system", "content": ASSISTANT_SYSTEM_PROMPT}]
+    for m in history[-10:]:
+        role = "assistant" if m["role"] == "assistant" else "user"
+        messages.append({"role": role, "content": m["text"]})
+    messages.append({"role": "user", "content": user_text})
+    payload = {"messages": messages, "model": model, "referrer": "netpulse",
+               "seed": int(time.time()) % 100000,
+               "temperature": 0.5, "max_tokens": 700, "stream": True}
+    client = _assistant_client()
+    last_err = None
+    for url in assistant_api_urls():
+        got = False
+        try:
+            with client.post(url, json=payload, timeout=(10, 60), stream=True) as r:
+                if r.status_code != 200:
+                    last_err = f"HTTP {r.status_code}"
+                    continue
+                ctype = r.headers.get("Content-Type", "")
+                if "event-stream" not in ctype and "ndjson" not in ctype and "json" in ctype:
+                    # сервер проигнорировал stream=true — работаем как с обычным JSON
+                    data = r.json()
+                    choice = (data.get("choices") or [{}])[0]
+                    txt = ((choice.get("message") or {}).get("content") or "").strip()
+                    if txt:
+                        yield txt; return
+                    last_err = "пустой ответ модели"; continue
+                buf = b""
+                for chunk in r.iter_content(1024):
+                    if not chunk: continue
+                    buf += chunk
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        line = line.strip()
+                        if not line.startswith(b"data:"): continue
+                        data = line[5:].strip()
+                        if data == b"[DONE]":
+                            if got: return
+                            break
+                        try:
+                            j = json.loads(data.decode("utf-8", "ignore"))
+                        except ValueError:
+                            continue
+                        d = ""
+                        try:
+                            ch = (j.get("choices") or [{}])[0]
+                            d = ((ch.get("delta") or {}).get("content")
+                                 or (ch.get("message") or {}).get("content") or "")
+                        except AttributeError:
+                            d = ""
+                        if d:
+                            got = True
+                            yield d
+                if got: return
+        except (http_lib.exceptions.RequestException, OSError) as e:
+            last_err = type(e).__name__
+            log.warning("assistant stream %s: %s", url, e)
+            if got:   # часть текста уже отправлена — не переключаем адрес
+                return
+    yield "\n\n⚠ Сервис помощника сейчас недоступен. Попробуйте ещё раз через 10–20 секунд."
+
+
+@app.route("/api/chat/stream", methods=["POST"])
+@login_required
+def chat_stream():
+    d = request.get_json(silent=True) or {}
+    text = (d.get("text") or "").strip()[:900]
+    if not text: return jsonify(ok=False, error="empty"), 400
+    db = get_db(); uid = session["user"]["db_id"]; now = int(time.time()*1000)
+    db.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)", (uid, now, "user", text))
+    db.commit()
+
+    def gen():
+        full = []
+        # отдельное соединение: контекст запроса закрывается до окончания стрима
+        try:
+            conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+            history = [dict(r) for r in conn.execute(
+                "SELECT role,text FROM chat_messages WHERE user_id=? ORDER BY ts DESC LIMIT 11",
+                (uid,)).fetchall()][::-1][:-1]
+        except Exception:
+            conn = None; history = []
+        try:
+            for piece in _assistant_stream(history, text):
+                full.append(piece)
+                yield "d" + json.dumps({"t": piece}, ensure_ascii=False) + "\n"
+        except Exception as e:
+            log.warning("chat stream error: %s", e)
+            yield "d" + json.dumps({"t": "⚠ Сервис помощника сейчас недоступен — попробуйте ещё раз через 10–20 секунд."}, ensure_ascii=False) + "\n"
+        reply = "".join(full).strip()
+        if reply and conn is not None:
+            try:
+                conn.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)",
+                             (uid, int(time.time()*1000), "assistant", reply))
+                conn.commit()
+            except Exception as e:
+                log.warning("chat save error: %s", e)
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
+        yield "e" + json.dumps({"ok": bool(reply)}) + "\n"
+
+    return Response(gen(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.route("/api/chat", methods=["POST"])
 @login_required
 def chat_send():

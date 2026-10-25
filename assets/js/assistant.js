@@ -66,14 +66,35 @@
     text=(text||'').trim(); if(!text)return;
     addMsg('user',text); $('#chatText').value='';
     const btn=$('#chatSend'); btn.disabled=true;
-    const typing=addMsg('assistant','печатает…'); typing.querySelector('.bubble').classList.add('typing');
+    const msgEl=addMsg('assistant',''); const bubble=msgEl.querySelector('.bubble');
+    bubble.classList.add('typing'); bubble.textContent='▍';
+    let acc='', got=false, okEnd=false, streamed=false;
+    function paint(){ bubble.innerHTML=renderMd(acc)+'<span class="cursor">▍</span>'; $('#chatLog').scrollTop=1e9; }
     try{
-      const r=await fetch('/api/chat',{method:'POST',credentials:'include',
+      const r=await fetch('/api/chat/stream',{method:'POST',credentials:'include',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
-      const j=await r.json();
-      typing.querySelector('.bubble').classList.remove('typing');
-      typing.querySelector('.bubble').innerHTML=renderMd(j.reply||'…');
-    }catch(e){typing.querySelector('.bubble').textContent='⚠ Сеть недоступна';}
+      if(r.ok && (r.headers.get('Content-Type')||'').includes('event-stream')){
+        streamed=true;
+        const rd=r.body.getReader(), dec=new TextDecoder(); let buf='';
+        while(true){
+          const {done,value}=await rd.read(); if(done)break;
+          buf+=dec.decode(value,{stream:true});
+          let i;
+          while((i=buf.indexOf('\n'))>=0){
+            const line=buf.slice(0,i).trim(); buf=buf.slice(i+1);
+            if(!line)continue;
+            if(line[0]==='d'){ try{ acc+=(JSON.parse(line.slice(1)).t||''); got=true; paint(); }catch(e){} }
+            else if(line[0]==='e'){ try{ okEnd=JSON.parse(line.slice(1)).ok!==false; }catch(e){} }
+          }
+        }
+      } else {
+        // fallback: обычный JSON-ответ (старый эндпоинт)
+        const j=await r.json().catch(()=>({}));
+        acc=j.reply||'⚠ Сеть недоступна'; got=true;
+      }
+    }catch(e){ acc=acc||'⚠ Сеть недоступна'; got=true; }
+    bubble.classList.remove('typing');
+    bubble.innerHTML=renderMd(got?acc.trim():'⚠ Пустой ответ, попробуйте ещё раз.');
     btn.disabled=false; $('#chatText').focus();
   }
 
