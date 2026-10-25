@@ -1,5 +1,5 @@
 """NetPulse — сервер. Google-вход, поиск, мониторинг сайтов, уведомления, экспорт, API-токены."""
-import os, json, time, sqlite3, logging, secrets, re, csv, io, hmac, hashlib
+import os, json, time, sqlite3, logging, secrets, re, csv, io, hmac, hashlib, base64, uuid
 from pathlib import Path
 from datetime import timedelta, datetime
 from functools import wraps
@@ -379,6 +379,27 @@ def notif_read():
     get_db().execute("UPDATE notifications SET read=1 WHERE user_id=?", (session["user"]["db_id"],))
     get_db().commit(); return jsonify(ok=True)
 
+# --- комбинированный доступ: по логину ИЛИ по API-ключу (для инструментов на клиенте) ---
+# (проверка ключа идёт во время запроса — к этому моменту _dev_auth уже определена ниже)
+def dev_or_login_required(fn):
+    @wraps(fn)
+    def w(*a, **k):
+        if session.get("user"):
+            return fn(*a, **k)
+        auth, err = _dev_auth()
+        if not auth:
+            status = {"rate_limited": 429, "quota_exceeded": 429}.get(err, 403)
+            resp = make_response(jsonify(ok=False, error=err or "missing_key", code=status,
+                        message="Требуется вход или API-ключ",
+                        hint="Войдите на сайт или передайте заголовок 'X-NetPulse-Key: sp-test-…'"))
+            resp.status_code = status
+            if status == 429: resp.headers["Retry-After"] = "60"
+            return resp
+        g.dev = auth
+        session["user"] = {**g.dev["user"], "db_id": g.dev["user"]["id"]}
+        return fn(*a, **k)
+    return w
+
 # --- утилиты: калькуляторы IP и конвертеры единиц ---
 def _netmask_to_prefix(mask):
     try:
@@ -389,8 +410,8 @@ def _netmask_to_prefix(mask):
         return bin(bits).count("1")
     except Exception: return None
 
-@app.route("/api/tools/subnet")
-@login_required
+@app.route("/api/tools/subnet", methods=["GET"])
+@dev_or_login_required
 def tool_subnet():
     ip = request.args.get("ip","").strip(); pref = request.args.get("prefix","").strip()
     m = re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:/(\d{1,2}))?$", ip)
@@ -414,8 +435,8 @@ def tool_subnet():
                    total=total, usable=usable,
                    version="IPv4", cidr=f"{d2s(net)}/{p}")
 
-@app.route("/api/tools/units")
-@login_required
+@app.route("/api/tools/units", methods=["GET"])
+@dev_or_login_required
 def tool_units():
     try: val = float(request.args.get("value","0")); frm = request.args.get("from","mbps")
     except ValueError: return jsonify(ok=False, error="bad_value"), 400
@@ -599,13 +620,17 @@ def tokens_revoke(tid):
 DEV_ENDPOINTS = ["/info", "/ping?url=", "/status?url=", "/latency?host=&port=&n=",
                  "/speedtest/start?bytes=&downloads=&upload=true", "/speedtest/result?id=",
                  "/speed?bytes=&downloads=&upload=", "/trace?url=", "/dns?host=", "/whois?domain=",
-                 "/search?q=", "/subnet?cidr=", "/units?v=&from=&to=", "/ip", "/uptime?url=&interval_sec="]
+                 "/search?q=", "/subnet?cidr=", "/units?v=&from=&to=", "/ip", "/uptime?url=&interval_sec=",
+                 "/encode?text=&mode=base64|url|hex&op=encode|decode", "/hash?text=&algo=all",
+                 "/uuid?n=1..20&kind=uuid4|hex|digits|token", "/qrcode?text=", "/http-headers?url="]
 # «как у всех» (OpenAI/Stripe-стиль): scope basic даёт ВСЮ базовую диагностику, включая спидтест,
 # чтобы новый ключ без тонкой настройки сразу работал со всеми основными сервисами.
 # speedtest/result — продолжение асинхронного спидтеста, поэтому scope у него тот же, что у start ("speed")
 DEV_ENDPOINT_SCOPE = {"/api/v1/speedtest/result": "speed"}
 DEV_SCOPES = {"basic": ["ping", "status", "speed", "dns", "latency", "trace", "subnet", "units", "ip", "info", "uptime"],
               "net": ["dns", "whois", "trace", "latency"],
+              "tools": ["units", "subnet"],          # encode/hash/uuid/qrcode тоже на scope units
+              "sec": ["status", "dns", "whois"],     # http-headers на scope status
               "search": ["search"],
               "all": ["ping", "status", "speed", "dns", "whois", "trace", "latency", "search",
                       "subnet", "units", "ip", "uptime", "info"]}
@@ -794,6 +819,121 @@ def dev_info():
                    services=["speedtest (наш спидтест через Cloudflare edge)", "ping", "latency/jitter",
                              "traceroute", "dns", "whois", "google search", "subnet calculator",
                              "unit converter", "ip info", "uptime monitoring"])
+
+@app.route("/api/v1/encode")
+@dev_required
+def dev_encode():
+    """Кодирование/декодирование: base64 / url / hex. ?text=&mode=base64|url|hex&op=encode|decode"""
+    denied = _dev_scope("units")
+    if denied: return denied
+    text = request.values.get("text", "")[:20000]
+    mode = (request.values.get("mode") or "base64").lower()
+    op   = (request.values.get("op") or "encode").lower()
+    if not text: return jsonify(ok=False, error="empty_text"), 400
+    try:
+        if mode == "base64":
+            out = base64.b64encode(text.encode()).decode() if op == "encode" \
+                  else base64.b64decode(text.encode(), validate=True).decode("utf-8", "replace")
+        elif mode == "url":
+            from urllib.parse import quote, unquote
+            out = quote(text, safe="") if op == "encode" else unquote(text)
+        elif mode == "hex":
+            out = text.encode().hex() if op == "encode" else bytes.fromhex(text).decode("utf-8", "replace")
+        else:
+            return jsonify(ok=False, error="bad_mode", hint="base64 | url | hex"), 400
+    except Exception as e:
+        return jsonify(ok=False, error="bad_input", detail=str(e)[:150]), 400
+    return jsonify(ok=True, mode=mode, op=op, input_len=len(text), result=out)
+
+@app.route("/api/v1/hash", methods=["GET", "POST"])
+@dev_required
+def dev_hash():
+    """Хеши текста: ?text=&algo=all|md5|sha1|sha256|sha512 — отдаёт дайджесты + HMAC, если задан key."""
+    denied = _dev_scope("units")
+    if denied: return denied
+    text = request.values.get("text", "")[:100_000]
+    if not text: return jsonify(ok=False, error="empty_text"), 400
+    algo = (request.values.get("algo") or "all").lower()
+    algos = ["md5", "sha1", "sha256", "sha512"] if algo == "all" else [algo]
+    out = {}
+    for a in algos:
+        h = getattr(hashlib, a, None)
+        if h is None: return jsonify(ok=False, error="bad_algo", hint="md5|sha1|sha256|sha512|all"), 400
+        out[a] = h(text.encode()).hexdigest()
+    res = {"ok": True, "length": len(text), "hashes": out}
+    secret = request.values.get("key")
+    if secret:
+        res["hmac_sha256"] = hmac.new(secret.encode(), text.encode(), hashlib.sha256).hexdigest()
+    return jsonify(res)
+
+@app.route("/api/v1/uuid")
+@dev_required
+def dev_uuid():
+    """Генератор UUID/nano-id. ?n=1..20&kind=uuid4|hex|digits|token"""
+    denied = _dev_scope("units")
+    if denied: return denied
+    n = min(max(int(request.args.get("n", 1)), 1), 20)
+    kind = request.args.get("kind", "uuid4")
+    vals = []
+    for _ in range(n):
+        if kind == "uuid4":   vals.append(str(uuid.uuid4()))
+        elif kind == "hex":   vals.append(secrets.token_hex(16))
+        elif kind == "digits":vals.append("".join(secrets.choice("0123456789") for _ in range(12)))
+        elif kind == "token": vals.append(secrets.token_urlsafe(24))
+        else: return jsonify(ok=False, error="bad_kind", hint="uuid4|hex|digits|token"), 400
+    return jsonify(ok=True, kind=kind, values=vals)
+
+@app.route("/api/v1/qrcode")
+@dev_required
+def dev_qrcode():
+    """QR-код для ссылки/текста → SVG. ?text=..."""
+    denied = _dev_scope("units")
+    if denied: return denied
+    data = request.values.get("text", "")[:1000]
+    if not data: return jsonify(ok=False, error="empty_text"), 400
+    try:
+        import qrcode
+        from qrcode.image.svg import SvgPathImage
+        img = qrcode.make(data, image_factory=SvgPathImage)
+        raw = img.to_string()
+        svg = raw.decode() if isinstance(raw, bytes) else str(raw)
+        return Response(svg, mimetype="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=300"})
+    except ImportError:
+        return jsonify(ok=False, error="qrcode_not_installed",
+                       hint="pip install qrcode (есть в requirements.txt)"), 501
+
+@app.route("/api/v1/http-headers")
+@dev_required
+def dev_http_headers():
+    """Что сервер/сайт отдаёт по URL: заголовки ответа, редиректы, HSTS/CSP наличие. ?url="""
+    denied = _dev_scope("status")
+    if denied: return denied
+    url = (request.args.get("url") or "").strip()
+    if not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
+    chain = []
+    cur = url
+    try:
+        for _ in range(6):
+            r = http_lib.head(cur, timeout=10, allow_redirects=False,
+                              headers={"User-Agent": "NetPulseAPI/1.0"})
+            info = {"url": cur[:300], "status": r.status_code,
+                    "server": r.headers.get("Server"), "content_type": r.headers.get("Content-Type")}
+            sec = {}
+            for h in ("Strict-Transport-Security", "Content-Security-Policy", "X-Frame-Options",
+                      "X-Content-Type-Options", "Referrer-Policy"):
+                if h in r.headers: sec[h] = r.headers[h][:120]
+            info["security_headers"] = sec
+            chain.append(info)
+            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("Location"):
+                loc = r.headers["Location"]
+                cur = loc if loc.startswith("http") else cur.rstrip("/") + loc
+            else:
+                break
+        return jsonify(ok=True, target=url, redirects=len(chain) - 1, final_status=chain[-1]["status"],
+                       chain=chain)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)[:200]), 502
 
 # ---------- СПИДТЕСТ ЧЕРЕЗ API (asynchronous, как у нормальных провайдеров) ----------
 # POST/GET /api/v1/speedtest/start  → id задания; сервер измеряет down/up/ping в фоне
@@ -1148,10 +1288,10 @@ def dev_ip():
     молча оставался null при недоступности единственного источника."""
     fwd = request.headers.get("X-Forwarded-For", "")
     client = (fwd.split(",")[0].strip() if fwd else "") or request.headers.get("X-Real-IP", "") or request.remote_addr or ""
-    g = _geo_lookup(client)
-    if not g:                                   # приватный/локальный IP — спросим внешний сервис
-        g = _geo_lookup("")
-    return jsonify(ok=True, ip=g.get("ip") or client, geo=g or None,
+    geo = _geo_lookup(client)
+    if not geo:                                 # приватный/локальный IP — спросим внешний сервис
+        geo = _geo_lookup("")
+    return jsonify(ok=True, ip=geo.get("ip") or client, geo=geo or None,
                    user_agent=request.headers.get("User-Agent", "")[:200])
 
 def _geo_lookup(ip):
@@ -1289,7 +1429,11 @@ ASSISTANT_SYSTEM_PROMPT = (
     "Cloudflare edge, параметры bytes=1..25 МБ, downloads=1..6 потоков, upload=true → download_mbps, "
     "upload_mbps, ping_ms), пинг и задержка (/api/v1/ping, /api/v1/latency с avg/min/max/jitter), "
     "трассировка (/api/v1/trace), DNS, WHOIS, поиск Google, калькулятор подсетей, конвертер единиц, "
-    "IP-инфо и uptime-мониторинг. Если пользователь хочет использовать наш спидтест или сеть-сервисы "
+    "IP-инфо и uptime-мониторинг, а также утилиты v9: кодирование base64/url/hex (/api/v1/encode), "
+    "хеш-суммы md5/sha1/sha256/sha512 + HMAC (/api/v1/hash?text=&algo=all&key=), генератор UUID/токенов "
+    "(/api/v1/uuid?n=&kind=uuid4|hex|digits|token), QR-код в виде SVG (/api/v1/qrcode?text=...), "
+    "проверка HTTP-заголовков и редиректов сайта с HSTS/CSP/X-Frame-Options (/api/v1/http-headers?url=). "
+    "Если пользователь хочет использовать наш спидтест или сеть-сервисы "
     "на своём сайте — покажи пример с нужным эндпоинтом.\n"
     "Пример для пользователя (показывай кодом):\n"
     "```js\n// спидтест через наш API (асинхронно: старт + опрос результата)\nconst H={headers:{'X-NetPulse-Key':'sp-test-ВАШ_КЛЮЧ'}};\n"

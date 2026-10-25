@@ -48,6 +48,8 @@
         <option value="live">🚀 live — боевой</option></select>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="basic" checked> basic (ping/status/спидтест/dns/latency/trace/subnet/units/ip)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="net"> net (dns/whois/trace/latency)</label>
+      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="tools"> tools (encode/hash/uuid/qrcode/subnet/units)</label>
+      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="sec"> sec (http-headers/status/dns/whois)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="search"> search (Google)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="dkAll" value="all"> ✨ all — доступ ко всем сервисам сразу</label>
       <select id="dkRate" class="sel" title="Лимит запросов в минуту">
@@ -89,7 +91,13 @@ const j = await r.json();  // {ok:true, reachable:true, latency_ms:42.1}
 //   GET /api/v1/ip?geo=1                       — IP клиента + гео
 //   GET /api/v1/uptime                         — ваши мониторы и uptime%
 //   POST /api/v1/uptime  {url, interval_sec}   — добавить монитор
-//   GET /api/v1/info                           — инфо о ключе</pre>
+//   GET /api/v1/info                           — инфо о ключе
+// НОВЫЕ сервисы v9:
+//   GET /api/v1/encode?text=привет&mode=base64|url|hex&op=encode|decode — кодирование
+//   GET /api/v1/hash?text=данные&algo=all       — md5/sha1/sha256/sha512 + HMAC (?key=…)
+//   GET /api/v1/uuid?n=3&kind=uuid4             — генератор uuid4|hex|digits|token
+//   GET /api/v1/qrcode?text=https://site.ru     — QR-код (ответ — SVG-картинка)
+//   GET /api/v1/http-headers?url=https://site.ru — редиректы + безопасность (HSTS/CSP/XFO)</pre>
     </details>
   </section>
   <section class="card glass col-12">

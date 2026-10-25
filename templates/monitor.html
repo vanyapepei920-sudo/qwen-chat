@@ -41,6 +41,33 @@
     </form>
     <div class="kv" id="unitOut" style="margin-top:10px"></div>
   </section>
+
+  <section class="card glass col-6">
+    <div class="card-h"><h3>🔐 Хеш-суммы и Base64</h3></div>
+    <form class="s-form" id="hashForm" autocomplete="off">
+      <input class="inp big" id="hashText" placeholder="Текст для хеша или base64…" required>
+      <button class="btn" type="submit">Вычислить</button>
+    </form>
+    <div class="kv" id="hashOut" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card glass col-6">
+    <div class="card-h"><h3>🆔 Генератор UUID и QR-код</h3></div>
+    <form class="s-form" id="uuidForm" autocomplete="off">
+      <select class="sel" id="uuidKind">
+        <option value="uuid4">UUID v4</option><option value="hex">HEX (32)</option>
+        <option value="digits">12 цифр</option><option value="token">URL-токен</option>
+      </select>
+      <input class="inp" id="uuidN" type="number" min="1" max="5" value="3" style="width:80px">
+      <button class="btn" type="submit">Сгенерировать</button>
+    </form>
+    <div id="uuidOut" style="margin-top:10px;font-family:var(--mono);font-size:12.5px"></div>
+    <form class="s-form" id="qrForm" autocomplete="off" style="margin-top:10px">
+      <input class="inp big" id="qrText" placeholder="https://… — сделать QR-код">
+      <button class="btn ghost" type="submit">QR</button>
+    </form>
+    <div id="qrOut" style="margin-top:10px"></div>
+  </section>
 </div></div>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='js/monitor.js') }}"></script>{% endblock %}

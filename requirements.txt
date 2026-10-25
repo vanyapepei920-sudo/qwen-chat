@@ -5,3 +5,4 @@ requests==2.32.3
 google-auth==2.32.0
 gunicorn==22.0.0
 python-whois==0.9.4
+qrcode==7.4.2

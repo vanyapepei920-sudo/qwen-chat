@@ -64,6 +64,35 @@ $('#subForm').onsubmit=async e=>{
     .map(([k,v])=>'<div class="k">'+k+'</div><div class="v">'+(v??'—')+'</div>').join('');
 };
 
+/* --- hash + base64 (через публичный API с автоподстановкой ключа из localStorage) --- */
+$('#hashForm').onsubmit=async e=>{
+  e.preventDefault();
+  const t=$('#hashText').value.trim(); if(!t)return;
+  const out=$('#hashOut'); out.innerHTML='<small style="opacity:.6">Считаю…</small>';
+  try{
+    const j=await api('/api/v1/hash?text='+encodeURIComponent(t)+'&algo=all',{credentials:'omit'});
+    const b=await api('/api/v1/encode?text='+encodeURIComponent(t)+'&mode=base64&op=encode',{credentials:'omit'});
+    if(!j.ok){out.innerHTML='<div class="k">Ошибка</div><div class="v">'+(j.hint||j.error||'')+'</div>';return;}
+    out.innerHTML=Object.entries(j.hashes).map(([k,v])=>'<div class="k">'+k+'</div><div class="v" style="word-break:break-all;font-family:var(--mono);font-size:11.5px">'+v+'</div>').join('')+
+      '<div class="k">base64</div><div class="v" style="word-break:break-all;font-family:var(--mono);font-size:11.5px">'+(b.result||'—')+'</div>';
+  }catch(err){out.innerHTML='<div class="k">Сбой</div><div class="v">'+err+'</div>';}
+};
+
+/* --- uuid generator + qr --- */
+$('#uuidForm').onsubmit=async e=>{
+  e.preventDefault();
+  const j=await api('/api/v1/uuid?n='+($('#uuidN').value||3)+'&kind='+$('#uuidKind').value,{credentials:'omit'});
+  $('#uuidOut').innerHTML=j.ok?j.values.map(v=>'<div style="padding:2px 0">'+v+'</div>').join(''):('<small>'+(j.hint||j.error||'ошибка')+'</small>');
+};
+$('#qrForm').onsubmit=async e=>{
+  e.preventDefault();
+  const t=$('#qrText').value.trim(); if(!t)return;
+  const r=await fetch('/api/v1/qrcode?text='+encodeURIComponent(t),{credentials:'omit'});
+  const ct=r.headers.get('Content-Type')||'';
+  if(r.ok&&ct.includes('svg')){$('#qrOut').innerHTML=await r.text();$('#qrOut').firstChild&&( $('#qrOut').querySelector('svg').style.cssText='width:150px;height:150px;background:#fff;border-radius:8px;padding:6px');}
+  else{const j=await r.json().catch(()=>({}));$('#qrOut').innerHTML='<small>'+(j.hint||j.error||'не удалось')+'</small>';}
+};
+
 /* --- units converter --- */
 $('#unitForm').onsubmit=async e=>{
   e.preventDefault();
