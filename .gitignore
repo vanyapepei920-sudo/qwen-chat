@@ -6,3 +6,7 @@ instance/
 venv/
 logs/
 server.log
+
+# runtime dirs (app.py создаёт их на лету)
+cache/
+data/
