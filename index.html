@@ -507,5 +507,10 @@
   <script src="./js/netmonitor.js"></script>
   <script src="./js/websearch.js"></script>
   <script src="./js/netlab.js"></script>
+  <!-- ══ статический режим: index.html работает БЕЗ app.py ══
+       auth.js     — обязательный вход через Google (Firebase Auth, ключи в Настройках)
+       apibridge.js— все /api/* функции исполняются прямо в браузере (DoH, ipapi, Cymru…) -->
+  <script src="./js/auth.js"></script>
+  <script src="./js/apibridge.js"></script>
 </body>
 </html>

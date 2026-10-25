@@ -511,3 +511,10 @@ textarea.input { resize: vertical; min-height: 60px; margin-top: 8px; }
 .user-chip a:hover{color:#ff9a9a}
 .v4b{border-style:dashed !important}
 @media (max-width:900px){.user-chip{display:none}}
+
+/* ══ статический режим (auth.js): обязательный вход через Google ══ */
+.user-chip.auth-off { cursor: pointer; border-color: rgba(66,133,244,.55); box-shadow: 0 0 0 1px rgba(66,133,244,.25), 0 0 18px rgba(66,133,244,.25); animation: authPulse 2.2s ease-in-out infinite; }
+.user-chip.auth-off #ucName { color: #8ab4f8; font-weight: 700; }
+@keyframes authPulse { 0%,100% { box-shadow: 0 0 0 1px rgba(66,133,244,.2), 0 0 8px rgba(66,133,244,.18);} 50% { box-shadow: 0 0 0 1px rgba(66,133,244,.45), 0 0 22px rgba(66,133,244,.4);} }
+#authKeysBox label { display:flex; flex-direction:column; gap:.25rem; margin:.5rem 0; font-size:.85rem; color:#9fb4d8; }
+#authKeysBox input { padding:.55rem .7rem; border-radius:10px; border:1px solid rgba(120,160,255,.25); background:#0c1424; color:#e8ecf5; font: inherit; }
