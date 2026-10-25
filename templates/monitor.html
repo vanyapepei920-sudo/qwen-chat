@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Мониторинг — NetPulse{% endblock %}
+{% block content %}
+<div class="container"><div class="grid">
+  <section class="card glass col-12">
+    <div class="card-h"><h3>📡 Мониторинг сайтов (uptime)</h3><div class="spacer"></div>
+      <span class="tag" id="mCount">0 сайтов</span></div>
+    <form class="s-form" id="mForm" autocomplete="off">
+      <input class="inp big" id="mUrl" placeholder="https://example.com" required>
+      <input class="inp" id="mName" placeholder="Название (необязательно)" style="max-width:220px">
+      <select class="sel" id="mInterval">
+        <option value="60">каждую минуту</option>
+        <option value="300" selected>каждые 5 минут</option>
+        <option value="900">каждые 15 минут</option>
+        <option value="3600">каждый час</option>
+      </select>
+      <button class="btn" type="submit">＋ Добавить</button>
+    </form>
+    <p style="color:var(--muted);font-size:12.5px;margin-top:4px">Проверки идут автоматически в фоне. При смене состояния «доступен ↔ недоступен» приходит уведомление (колокольчик + webhook/Telegram, если настроены).</p>
+    <div id="mList" class="mon-list"><small style="opacity:.6">Загрузка…</small></div>
+  </section>
+
+  <section class="card glass col-6">
+    <div class="card-h"><h3>🧮 Калькулятор подсетей</h3></div>
+    <form class="s-form" id="subForm" autocomplete="off">
+      <input class="inp big" id="subIp" placeholder="192.168.1.10/24" required>
+      <button class="btn" type="submit">Рассчитать</button>
+    </form>
+    <div class="kv" id="subOut" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card glass col-6">
+    <div class="card-h"><h3>🔁 Конвертер единиц</h3></div>
+    <form class="s-form" id="unitForm" autocomplete="off">
+      <input class="inp" id="unitVal" type="number" step="any" value="100" style="width:120px">
+      <select class="sel" id="unitFrom">
+        <option>mbps</option><option>gbps</option><option>kbps</option><option>bps</option>
+        <option>MB</option><option>GB</option><option>KB</option><option>TB</option><option>B</option>
+      </select>
+      <button class="btn" type="submit">Конвертировать</button>
+    </form>
+    <div class="kv" id="unitOut" style="margin-top:10px"></div>
+  </section>
+</div></div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/monitor.js') }}"></script>{% endblock %}

@@ -26,6 +26,18 @@
     <button class="btn danger" id="setWipeServer" style="width:100%">Удалить историю с сервера</button>
   </section>
   <section class="card glass col-12">
+    <div class="card-h"><h3>🔑 API‑токены (openapi)</h3><div class="spacer"></div>
+      <span class="tag">для curl и скриптов</span></div>
+    <form class="s-form" id="tokForm" autocomplete="off">
+      <input class="inp" id="tokLabel" placeholder="Название токена (например «script»)">
+      <button class="btn" type="submit">＋ Создать токен</button>
+    </form>
+    <div id="tokNew" hidden style="margin:10px 0"></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Метка</th><th>Создан</th><th>Последшее использование</th><th></th></tr></thead>
+      <tbody id="tokBody"><tr><td colspan="4" class="empty">Загрузка…</td></tr></tbody></table></div>
+    <p style="color:var(--muted);font-size:12.5px;margin-top:8px">Пример: <code style="font-family:var(--mono)">curl -H "Authorization: Bearer np_…" https://ваш-хост/openapi/v1/history</code></p>
+  </section>
+  <section class="card glass col-12">
     <div class="card-h"><h3>О системе</h3></div>
     <div class="stats">
       <div class="stat"><div class="k">User Agent</div><div class="v" style="font-size:12px;font-family:'Inter';font-weight:400" id="setUA">—</div></div>

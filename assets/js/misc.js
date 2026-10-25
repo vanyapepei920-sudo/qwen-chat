@@ -22,6 +22,7 @@
     $('#hClear').onclick=async()=>{if(!confirm('Удалить всю историю?'))return;await K.History.clear();load();K.toast('История очищена','ok',2200);};
     $('#hExport').onclick=async()=>{const rows=await K.History.load();const blob=new Blob([JSON.stringify(rows,null,1)],{type:'application/json'});
       const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='netpulse-history.json';a.click();K.toast('Экспорт готов','ok',2200);};
+    const exCsv=$('#hExportCsv');if(exCsv)exCsv.onclick=()=>{location.href='/api/history/export?format=csv';K.toast('Скачиваем CSV…','ok',2200);};
     load();
   }
 
@@ -39,5 +40,25 @@
     $('#setWipeLocal').onclick=()=>{['np_hist_local','np_prefs','np_demo','np_last_user'].forEach(k=>localStorage.removeItem(k));K.toast('Локальный кеш очищен','ok',2200);};
     $('#setWipeServer').onclick=async()=>{if(!confirm('Удалить историю с сервера?'))return;await K.History.clear();K.toast('Серверная история удалена','ok',2200);};
     fetch('/api/health').then(r=>r.json()).then(j=>{$('#setHealth').innerHTML='ok · google-auth:'+(j.google_auth?'yes':'fallback')+' · search:'+(j.search?'yes':'no');}).catch(()=>$('#setHealth').textContent='недоступен');
+
+    /* --- API-токены --- */
+    async function loadTokens(){const j=await fetch('/api/tokens',{credentials:'include'}).then(r=>r.json());
+      if(!j.ok)return;
+      $('#tokBody').innerHTML=j.tokens.length?j.tokens.map(t=>'<tr><td>'+t.label.replace(/</g,'&lt;')+'</td><td>'+(t.created_at||'—')+'</td><td>'+(t.last_used||'никогда')+'</td><td style="text-align:right"><button class="btn sm ghost danger" data-rev="'+t.id+'">Отозвать</button></td></tr>').join('')
+        :'<tr><td colspan="4" class="empty">Токенов пока нет</td></tr>';
+    }
+    $('#tokForm').onsubmit=async e=>{e.preventDefault();
+      const j=await fetch('/api/tokens',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({label:$('#tokLabel').value||'token'})}).then(r=>r.json());
+      if(j.ok){const box=$('#tokNew');box.hidden=false;
+        box.innerHTML='<div class="kv"><div class="k">Новый токен <b>(показан один раз!)</b></div><div class="v" style="font-family:var(--mono);word-break:break-all">'+j.token+
+        ' <button class="btn sm" id="tokCopy">Копировать</button></div></div>';
+        $('#tokCopy').onclick=()=>{navigator.clipboard.writeText(j.token);K.toast('Скопировано','ok',1500);};
+        $('#tokLabel').value='';loadTokens();}
+    };
+    $('#tokBody').onclick=async e=>{const b=e.target.closest('[data-rev]');if(!b)return;
+      if(!confirm('Отозвать токен?'))return;
+      await fetch('/api/tokens/'+b.dataset.rev,{method:'DELETE',credentials:'include'});loadTokens();};
+    loadTokens();
   }
 })();
