@@ -1,1 +1,19 @@
-eyUgZXh0ZW5kcyAiYmFzZS5odG1sIiAlfQp7JSBibG9jayB0aXRsZSAlfdCi0YDQsNGB0YHQuNGA0L7QstC60LAg4oCUIE5ldFB1bHNleyUgZW5kYmxvY2sgJX0KeyUgYmxvY2sgY29udGVudCAlfQo8ZGl2IGNsYXNzPSJjb250YWluZXIiPjxkaXYgY2xhc3M9ImdyaWQiPgogIDxzZWN0aW9uIGNsYXNzPSJjYXJkIGdsYXNzIGNvbC0xMiI+CiAgICA8ZGl2IGNsYXNzPSJjYXJkLWgiPjxoMz5IVFRQIFRyYWNlIFJvdXRlPC9oMz48ZGl2IGNsYXNzPSJzcGFjZXIiPjwvZGl2PgogICAgICA8c3BhbiBjbGFzcz0idGFnIj7QsdGA0LDRg9C30LXRgNC90LDRjyDRjdC80YPQu9GP0YbQuNGPINC/0L4g0LrRgNCw0LnigJHRg9C30LvQsNC8PC9zcGFuPgogICAgICA8YnV0dG9uIGNsYXNzPSJidG4gc20gcHJpbWFyeSIgaWQ9InRyU3RhcnQiPuKWtiDQl9Cw0L/Rg9GB0YLQuNGC0Yw8L2J1dHRvbj48L2Rpdj4KICAgIDxwIGNsYXNzPSJtdXRlZC1ub3RlIj7Qp9C10YHRgtC90YvQuSBJQ01Q4oCRdHJhY2Vyb3V0ZSDQuNC3INCx0YDQsNGD0LfQtdGA0LAg0L3QtdCy0L7Qt9C80L7QttC10L0gKNC90LXRgiByYXfigJHRgdC+0LrQtdGC0L7QsikuINCX0LTQtdGB0Ywg0LjQt9C80LXRgNGP0LXRgtGB0Y8gUlRUINC00L4g0YbQtdC/0L7Rh9C60LggZWRnZeKAkdGD0LfQu9C+0LIgQ0ROIOKAlCDRjdGC0L4g0L/QvtC60LDQt9GL0LLQsNC10YIg0L/Rg9GC0Ywg0Lgg0LfQsNC00LXRgNC20LrQuCDQvdCwINC60LDQttC00L7QvCBob3AuPC9wPgogICAgPGRpdiBjbGFzcz0idGJsLXdyYXAiPjx0YWJsZT48dGhlYWQ+PHRyPjx0aD4jPC90aD48dGg+0KPQt9C10LsgLyBIb3A8L3RoPjx0aD7Qm9C+0LrQsNGG0LjRjzwvdGg+PHRoPklQPC90aD48dGg+UlRUPC90aD48dGg+0KHRgtCw0YLRg9GBPC90aD48L3RyPjwvdGhlYWQ+PHRib2R5IGlkPSJ0ckJvZHkiPjx0cj48dGQgY29sc3Bhbj0iNiIgY2xhc3M9ImVtcHR5Ij7QndCw0LbQvNC40YLQtSDCq9CX0LDQv9GD0YHRgtC40YLRjMK7PC90ZD48L3RyPjwvdGJvZHk+PC90YWJsZT48L2Rpdj4KICAgIDxkaXYgY2xhc3M9InRyLXN1bSIgaWQ9InRyU3VtIiBoaWRkZW4+CiAgICAgIDxkaXYgY2xhc3M9InN0YXQiPjxkaXYgY2xhc3M9ImsiPtCl0L7Qv9C+0LI8L2Rpdj48ZGl2IGNsYXNzPSJ2IiBpZD0idHJIb3BzIj4wPC9kaXY+PC9kaXY+CiAgICAgIDxkaXYgY2xhc3M9InN0YXQgcGluZyI+PGRpdiBjbGFzcz0iayI+0KHRg9C80LzQsNGA0L3QvjwvZGl2PjxkaXYgY2xhc3M9InYiIGlkPSJ0clRvdGFsIj7igJQ8c3BhbiBjbGFzcz0idSI+0LzRgTwvc3Bhbj48L2Rpdj48L2Rpdj4KICAgICAgPGRpdiBjbGFzcz0ic3RhdCI+PGRpdiBjbGFzcz0iayI+0JvRg9GH0YjQuNC5IGhvcDwvZGl2PjxkaXYgY2xhc3M9InYiIGlkPSJ0ckJlc3QiPuKAlDwvZGl2PjwvZGl2PgogICAgPC9kaXY+CiAgPC9zZWN0aW9uPgo8L2Rpdj48L2Rpdj4KeyUgZW5kYmxvY2sgJX0KeyUgYmxvY2sgc2NyaXB0cyAlfTxzY3JpcHQgc3JjPSJ7eyB1cmxfZm9yKCdzdGF0aWMnLCBmaWxlbmFtZT0nanMvbmV0dG9vbHMuanMnKSB9fSI+PC9zY3JpcHQ+eyUgZW5kYmxvY2sgJX0K
+{% extends "base.html" %}
+{% block title %}Трассировка — NetPulse{% endblock %}
+{% block content %}
+<div class="container"><div class="grid">
+  <section class="card glass col-12">
+    <div class="card-h"><h3>HTTP Trace Route</h3><div class="spacer"></div>
+      <span class="tag">браузерная эмуляция по край‑узлам</span>
+      <button class="btn sm primary" id="trStart">▶ Запустить</button></div>
+    <p class="muted-note">Честный ICMP‑traceroute из браузера невозможен (нет raw‑сокетов). Здесь измеряется RTT до цепочки edge‑узлов CDN — это показывает путь и задержки на каждом hop.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>#</th><th>Узел / Hop</th><th>Локация</th><th>IP</th><th>RTT</th><th>Статус</th></tr></thead><tbody id="trBody"><tr><td colspan="6" class="empty">Нажмите «Запустить»</td></tr></tbody></table></div>
+    <div class="tr-sum" id="trSum" hidden>
+      <div class="stat"><div class="k">Хопов</div><div class="v" id="trHops">0</div></div>
+      <div class="stat ping"><div class="k">Суммарно</div><div class="v" id="trTotal">—<span class="u">мс</span></div></div>
+      <div class="stat"><div class="k">Лучший hop</div><div class="v" id="trBest">—</div></div>
+    </div>
+  </section>
+</div></div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/nettools.js') }}"></script>{% endblock %}

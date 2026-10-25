@@ -1,1 +1,75 @@
-LyogPT09PT0g0YHRgtGA0LDQvdC40YbQsCDQnNC+0L3QuNGC0L7RgNC40L3Qs9CwOiB1cHRpbWUt0L/RgNC+0LLQtdGA0LrQuCwgc3VibmV0LdC60LDQu9GM0LrRg9C70Y/RgtC+0YAsINC60L7QvdCy0LXRgNGC0LXRgCA9PT09PSAqLwooZnVuY3Rpb24oKXsKY29uc3QgSz13aW5kb3cuTlBLLCQ9Sy4kLG5mPUsubmY7Cgphc3luYyBmdW5jdGlvbiBhcGkodXJsLG9wdCl7Y29uc3Qgcj1hd2FpdCBmZXRjaCh1cmwse2NyZWRlbnRpYWxzOidpbmNsdWRlJywuLi5vcHR9KTtyZXR1cm4gci5qc29uKCk7fQoKLyogLS0tIG1vbml0b3JzIC0tLSAqLwphc3luYyBmdW5jdGlvbiBsb2FkTW9uaXRvcnMoKXsKICBjb25zdCBlbD0kKCcjbUxpc3QnKTsgaWYoIWVsKXJldHVybjsKICBjb25zdCBqPWF3YWl0IGFwaSgnL2FwaS9tb25pdG9ycycpOwogIGlmKCFqLm9rKXtlbC5pbm5lckhUTUw9JzxzbWFsbCBzdHlsZT0ib3BhY2l0eTouNiI+0J3QtSDRg9C00LDQu9C+0YHRjCDQt9Cw0LPRgNGD0LfQuNGC0Yw8L3NtYWxsPic7cmV0dXJuO30KICAkKCcjbUNvdW50JykudGV4dENvbnRlbnQ9ai5tb25pdG9ycy5sZW5ndGgrJyAnK0sucGx1cmFsKGoubW9uaXRvcnMubGVuZ3RoLCfRgdCw0LnRgicsJ9GB0LDQudGC0LAnLCfRgdCw0LnRgtC+0LInKTsKICBpZighai5tb25pdG9ycy5sZW5ndGgpe2VsLmlubmVySFRNTD0nPGRpdiBjbGFzcz0iZW1wdHkiPtCU0L7QsdCw0LLRjNGC0LUg0L/QtdGA0LLRi9C5INGB0LDQudGCINC00LvRjyDQvNC+0L3QuNGC0L7RgNC40L3Qs9CwPC9kaXY+JztyZXR1cm47fQogIGVsLmlubmVySFRNTD1qLm1vbml0b3JzLm1hcChtPT57CiAgICBjb25zdCBsYXN0PW0ubGFzdCwgb2s9bGFzdCYmbGFzdC5vaywgc3Q9IWxhc3Q/J+KAlCc6KG9rPydVUCc6J0RPV04nKTsKICAgIGNvbnN0IHVwPW0udXB0aW1lXzI0aD09bnVsbD8n4oCUJzpuZihtLnVwdGltZV8yNGgsMSkrJyUnOwogICAgcmV0dXJuICc8ZGl2IGNsYXNzPSJtb24tcm93Jysob2s9PT1mYWxzZT8nIGRvd24nOicnKSsnIj4nKwogICAgICAnPHNwYW4gY2xhc3M9Im1vbi1kb3QgJysob2s9PT1udWxsPydpZGxlJzpvaz8nb24nOidvZmYnKSsnIj48L3NwYW4+JysKICAgICAgJzxkaXYgY2xhc3M9Im1vbi1tYWluIj48Yj4nKyhtLm5hbWV8fG0udXJsKS5yZXBsYWNlKC88L2csJyZsdDsnKSsnPC9iPicrCiAgICAgICc8YSBocmVmPSInK20udXJsKyciIHRhcmdldD0iX2JsYW5rIiByZWw9Im5vb3BlbmVyIj4nK20udXJsLnJlcGxhY2UoLzwvZywnJmx0OycpKyc8L2E+JysKICAgICAgJzxzbWFsbD7QutCw0LbQtNGL0LUgJytNYXRoLnJvdW5kKG0uaW50ZXJ2YWxfc2VjLzYwKSsnINC80LjQvSDCtyDRgdGC0LDRgtGD0YEgJysobGFzdCYmbGFzdC5zdGF0dXMhPW51bGw/bGFzdC5zdGF0dXM6J+KAlCcpKwogICAgICAobGFzdCYmbGFzdC5sYXRlbmN5X21zIT1udWxsPycgwrcgJytuZihsYXN0LmxhdGVuY3lfbXMsMCkrJyDQvNGBJzonJykrKGxhc3QmJmxhc3QuZXJyb3I/JyDCtyAnK2xhc3QuZXJyb3Iuc2xpY2UoMCw2MCk6JycpKyc8L3NtYWxsPjwvZGl2PicrCiAgICAgICc8ZGl2IGNsYXNzPSJtb24tc2lkZSI+PHNwYW4gY2xhc3M9ImJhZGdlICcrKG9rPydnb29kJzonYmFkJykrJyI+JytzdCsnPC9zcGFuPicrCiAgICAgICc8c3BhbiBjbGFzcz0idGFnIj4yNNGHOiAnK3VwKycgKCcrKG0uY2hlY2tzXzI0aHx8MCkrJyk8L3NwYW4+PC9kaXY+JysKICAgICAgJzxkaXYgY2xhc3M9Im1vbi1hY3RzIj4nKwogICAgICAgICc8YnV0dG9uIGNsYXNzPSJidG4gc20gZ2hvc3QiIGRhdGEtcnVuPSInK20uaWQrJyIgdGl0bGU9ItCf0YDQvtCy0LXRgNC40YLRjCDRgdC10LnRh9Cw0YEiPuKfszwvYnV0dG9uPicrCiAgICAgICAgJzxidXR0b24gY2xhc3M9ImJ0biBzbSBnaG9zdCIgZGF0YS10b2dnbGU9IicrbS5pZCsnIiB0aXRsZT0i0JLQutC7L9Cy0YvQutC7Ij4nKyhtLmVuYWJsZWQ/J+KPuCc6J+KWticpKyc8L2J1dHRvbj4nKwogICAgICAgICc8YnV0dG9uIGNsYXNzPSJidG4gc20gZ2hvc3QgZGFuZ2VyIiBkYXRhLWRlbD0iJyttLmlkKyciIHRpdGxlPSLQo9C00LDQu9C40YLRjCI+4pyVPC9idXR0b24+JysKICAgICAgJzwvZGl2PjwvZGl2Pic7CiAgfSkuam9pbignJyk7Cn0KJCgnI21Gb3JtJykub25zdWJtaXQ9YXN5bmMgZT0+ewogIGUucHJldmVudERlZmF1bHQoKTsKICBjb25zdCB1cmw9JCgnI21VcmwnKS52YWx1ZS50cmltKCk7IGlmKCF1cmwpcmV0dXJuOwogIEsuc2V0TG9hZGVyKHRydWUsJ9Cf0YDQvtCy0LXRgNGP0LXQvOKApicsdXJsKTsKICBjb25zdCBqPWF3YWl0IGFwaSgnL2FwaS9tb25pdG9ycycse21ldGhvZDonUE9TVCcsaGVhZGVyczp7J0NvbnRlbnQtVHlwZSc6J2FwcGxpY2F0aW9uL2pzb24nfSwKICAgIGJvZHk6SlNPTi5zdHJpbmdpZnkoe3VybCxuYW1lOiQoJyNtTmFtZScpLnZhbHVlLnRyaW0oKSxpbnRlcnZhbF9zZWM6TnVtYmVyKCQoJyNtSW50ZXJ2YWwnKS52YWx1ZSl9KX0pOwogIEsuc2V0TG9hZGVyKGZhbHNlKTsKICBpZighai5vayl7Sy50b2FzdCgn0J7RiNC40LHQutCwOiAnKyhqLmVycm9yfHwn0L3QtdC40LfQstC10YHRgtC90L4nKSwnZXJyJyk7cmV0dXJuO30KICBLLnRvYXN0KGoucmVzdWx0Lm9rPyfQodCw0LnRgiDQtNC+0LHQsNCy0LvQtdC9INC4INC00L7RgdGC0YPQv9C10L0g4pyFJzon0KHQsNC50YIg0LTQvtCx0LDQstC70LXQvSwg0L3QviDQvdC1INC+0YLQstC10YfQsNC10YIg4pqg77iPJywgai5yZXN1bHQub2s/J29rJzond2FybicpOwogICQoJyNtVXJsJykudmFsdWU9Jyc7JCgnI21OYW1lJykudmFsdWU9Jyc7bG9hZE1vbml0b3JzKCk7Cn07CiQoJyNtTGlzdCcpLm9uY2xpY2s9YXN5bmMgZT0+ewogIGNvbnN0IGI9ZS50YXJnZXQuY2xvc2VzdCgnYnV0dG9uJyk7IGlmKCFiKXJldHVybjsKICBpZihiLmRhdGFzZXQucnVuKXtiLmRpc2FibGVkPXRydWU7Y29uc3Qgaj1hd2FpdCBhcGkoJy9hcGkvbW9uaXRvcnMvJytiLmRhdGFzZXQucnVuKycvcnVuJyx7bWV0aG9kOidQT1NUJ30pO2IuZGlzYWJsZWQ9ZmFsc2U7CiAgICBpZihqLm9rKXtLLnRvYXN0KGoucmVzdWx0Lm9rPyfQlNC+0YHRgtGD0L/QtdC9ICgnK2oucmVzdWx0LnN0YXR1cysnLCAnK25mKGoucmVzdWx0LmxhdGVuY3lfbXMsMCkrJyDQvNGBKSc6J9Cd0LXQtNC+0YHRgtGD0L/QtdC9OiAnKyhqLnJlc3VsdC5lcnJvcnx8ai5yZXN1bHQuc3RhdHVzKSxqLnJlc3VsdC5vaz8nb2snOidlcnInKTtsb2FkTW9uaXRvcnMoKTt9fQogIGlmKGIuZGF0YXNldC50b2dnbGUpe2F3YWl0IGFwaSgnL2FwaS9tb25pdG9ycy8nK2IuZGF0YXNldC50b2dnbGUrJy90b2dnbGUnLHttZXRob2Q6J1BPU1QnfSk7bG9hZE1vbml0b3JzKCk7fQogIGlmKGIuZGF0YXNldC5kZWwpe2lmKCFjb25maXJtKCfQo9C00LDQu9C40YLRjCDQvNC+0L3QuNGC0L7RgD8nKSlyZXR1cm47YXdhaXQgYXBpKCcvYXBpL21vbml0b3JzLycrYi5kYXRhc2V0LmRlbCx7bWV0aG9kOidERUxFVEUnfSk7bG9hZE1vbml0b3JzKCk7fQp9Owpsb2FkTW9uaXRvcnMoKTsgc2V0SW50ZXJ2YWwobG9hZE1vbml0b3JzLDMwMDAwKTsKCi8qIC0tLSBzdWJuZXQgY2FsYyAtLS0gKi8KJCgnI3N1YkZvcm0nKS5vbnN1Ym1pdD1hc3luYyBlPT57CiAgZS5wcmV2ZW50RGVmYXVsdCgpOwogIGNvbnN0IHY9JCgnI3N1YklwJykudmFsdWUudHJpbSgpOyBpZighdilyZXR1cm47CiAgbGV0IGlwPXYscHJlZj0nJzsKICBpZih2LmluY2x1ZGVzKCcvJykpe1tpcCxwcmVmXT12LnNwbGl0KCcvJyk7fWVsc2V7cHJlZj1wcm9tcHQoJ9Cf0YDQtdGE0LjQutGBINC80LDRgdC60LggKNC90LDQv9GA0LjQvNC10YAgMjQpOicsJzI0Jyl8fCcyNCc7fQogIGNvbnN0IGo9YXdhaXQgYXBpKCcvYXBpL3Rvb2xzL3N1Ym5ldD9pcD0nK2VuY29kZVVSSUNvbXBvbmVudChpcCkrJyZwcmVmaXg9JytlbmNvZGVVUklDb21wb25lbnQocHJlZikpOwogIGNvbnN0IG91dD0kKCcjc3ViT3V0Jyk7CiAgaWYoIWoub2spe291dC5pbm5lckhUTUw9JzxkaXYgY2xhc3M9ImsiPtCe0YjQuNCx0LrQsDwvZGl2PjxkaXYgY2xhc3M9InYiPicrKGouZXJyb3J8fCcnKSsnPC9kaXY+JztyZXR1cm47fQogIG91dC5pbm5lckhUTUw9W1snQ0lEUicsai5jaWRyXSxbJ9Ch0LXRgtGMJyxqLm5ldHdvcmtdLFsn0JzQsNGB0LrQsCcsai5uZXRtYXNrXSxbJ1dpbGRjYXJkJyxqLndpbGRjYXJkXSwKICAgIFsnQnJvYWRjYXN0JyxqLmJyb2FkY2FzdF0sWyfQn9C10YDQstGL0Lkg0YXQvtGB0YInLGouZmlyc3RfaG9zdF0sWyfQn9C+0YHQu9C10LTQvdC40Lkg0YXQvtGB0YInLGoubGFzdF9ob3N0XSwKICAgIFsn0JLRgdC10LPQviDQsNC00YDQtdGB0L7Qsicsai50b3RhbC50b0xvY2FsZVN0cmluZygncnUtUlUnKV0sWyfQlNC+0YHRgtGD0L/QvdC+INGF0L7RgdGC0L7Qsicsai51c2FibGUudG9Mb2NhbGVTdHJpbmcoJ3J1LVJVJyldXQogICAgLm1hcCgoW2ssdl0pPT4nPGRpdiBjbGFzcz0iayI+JytrKyc8L2Rpdj48ZGl2IGNsYXNzPSJ2Ij4nKyh2Pz8n4oCUJykrJzwvZGl2PicpLmpvaW4oJycpOwp9OwoKLyogLS0tIHVuaXRzIGNvbnZlcnRlciAtLS0gKi8KJCgnI3VuaXRGb3JtJykub25zdWJtaXQ9YXN5bmMgZT0+ewogIGUucHJldmVudERlZmF1bHQoKTsKICBjb25zdCBqPWF3YWl0IGFwaSgnL2FwaS90b29scy91bml0cz92YWx1ZT0nK2VuY29kZVVSSUNvbXBvbmVudCgkKCcjdW5pdFZhbCcpLnZhbHVlKSsnJmZyb209JytlbmNvZGVVUklDb21wb25lbnQoJCgnI3VuaXRGcm9tJykudmFsdWUpKTsKICBjb25zdCBvdXQ9JCgnI3VuaXRPdXQnKTsKICBpZighai5vayl7b3V0LmlubmVySFRNTD0nPGRpdiBjbGFzcz0iayI+0J7RiNC40LHQutCwPC9kaXY+PGRpdiBjbGFzcz0idiI+Jysoai5lcnJvcnx8JycpKyc8L2Rpdj4nO3JldHVybjt9CiAgb3V0LmlubmVySFRNTD1PYmplY3QuZW50cmllcyhqLnJlc3VsdHMpLm1hcCgoW2ssdl0pPT4nPGRpdiBjbGFzcz0iayI+JytrKyc8L2Rpdj48ZGl2IGNsYXNzPSJ2Ij4nK051bWJlcih2KS50b0xvY2FsZVN0cmluZygncnUtUlUnLHttYXhpbXVtRnJhY3Rpb25EaWdpdHM6NH0pKyc8L2Rpdj4nKS5qb2luKCcnKTsKfTsKfSkoKTsK
+/* ===== страница Мониторинга: uptime-проверки, subnet-калькулятор, конвертер ===== */
+(function(){
+const K=window.NPK,$=K.$,nf=K.nf;
+
+async function api(url,opt){const r=await fetch(url,{credentials:'include',...opt});return r.json();}
+
+/* --- monitors --- */
+async function loadMonitors(){
+  const el=$('#mList'); if(!el)return;
+  const j=await api('/api/monitors');
+  if(!j.ok){el.innerHTML='<small style="opacity:.6">Не удалось загрузить</small>';return;}
+  $('#mCount').textContent=j.monitors.length+' '+K.plural(j.monitors.length,'сайт','сайта','сайтов');
+  if(!j.monitors.length){el.innerHTML='<div class="empty">Добавьте первый сайт для мониторинга</div>';return;}
+  el.innerHTML=j.monitors.map(m=>{
+    const last=m.last, ok=last&&last.ok, st=!last?'—':(ok?'UP':'DOWN');
+    const up=m.uptime_24h==null?'—':nf(m.uptime_24h,1)+'%';
+    return '<div class="mon-row'+(ok===false?' down':'')+'">'+
+      '<span class="mon-dot '+(ok===null?'idle':ok?'on':'off')+'"></span>'+
+      '<div class="mon-main"><b>'+(m.name||m.url).replace(/</g,'&lt;')+'</b>'+
+      '<a href="'+m.url+'" target="_blank" rel="noopener">'+m.url.replace(/</g,'&lt;')+'</a>'+
+      '<small>каждые '+Math.round(m.interval_sec/60)+' мин · статус '+(last&&last.status!=null?last.status:'—')+
+      (last&&last.latency_ms!=null?' · '+nf(last.latency_ms,0)+' мс':'')+(last&&last.error?' · '+last.error.slice(0,60):'')+'</small></div>'+
+      '<div class="mon-side"><span class="badge '+(ok?'good':'bad')+'">'+st+'</span>'+
+      '<span class="tag">24ч: '+up+' ('+(m.checks_24h||0)+')</span></div>'+
+      '<div class="mon-acts">'+
+        '<button class="btn sm ghost" data-run="'+m.id+'" title="Проверить сейчас">⟳</button>'+
+        '<button class="btn sm ghost" data-toggle="'+m.id+'" title="Вкл/выкл">'+(m.enabled?'⏸':'▶')+'</button>'+
+        '<button class="btn sm ghost danger" data-del="'+m.id+'" title="Удалить">✕</button>'+
+      '</div></div>';
+  }).join('');
+}
+$('#mForm').onsubmit=async e=>{
+  e.preventDefault();
+  const url=$('#mUrl').value.trim(); if(!url)return;
+  K.setLoader(true,'Проверяем…',url);
+  const j=await api('/api/monitors',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url,name:$('#mName').value.trim(),interval_sec:Number($('#mInterval').value)})});
+  K.setLoader(false);
+  if(!j.ok){K.toast('Ошибка: '+(j.error||'неизвестно'),'err');return;}
+  K.toast(j.result.ok?'Сайт добавлен и доступен ✅':'Сайт добавлен, но не отвечает ⚠️', j.result.ok?'ok':'warn');
+  $('#mUrl').value='';$('#mName').value='';loadMonitors();
+};
+$('#mList').onclick=async e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  if(b.dataset.run){b.disabled=true;const j=await api('/api/monitors/'+b.dataset.run+'/run',{method:'POST'});b.disabled=false;
+    if(j.ok){K.toast(j.result.ok?'Доступен ('+j.result.status+', '+nf(j.result.latency_ms,0)+' мс)':'Недоступен: '+(j.result.error||j.result.status),j.result.ok?'ok':'err');loadMonitors();}}
+  if(b.dataset.toggle){await api('/api/monitors/'+b.dataset.toggle+'/toggle',{method:'POST'});loadMonitors();}
+  if(b.dataset.del){if(!confirm('Удалить монитор?'))return;await api('/api/monitors/'+b.dataset.del,{method:'DELETE'});loadMonitors();}
+};
+loadMonitors(); setInterval(loadMonitors,30000);
+
+/* --- subnet calc --- */
+$('#subForm').onsubmit=async e=>{
+  e.preventDefault();
+  const v=$('#subIp').value.trim(); if(!v)return;
+  let ip=v,pref='';
+  if(v.includes('/')){[ip,pref]=v.split('/');}else{pref=prompt('Префикс маски (например 24):','24')||'24';}
+  const j=await api('/api/tools/subnet?ip='+encodeURIComponent(ip)+'&prefix='+encodeURIComponent(pref));
+  const out=$('#subOut');
+  if(!j.ok){out.innerHTML='<div class="k">Ошибка</div><div class="v">'+(j.error||'')+'</div>';return;}
+  out.innerHTML=[['CIDR',j.cidr],['Сеть',j.network],['Маска',j.netmask],['Wildcard',j.wildcard],
+    ['Broadcast',j.broadcast],['Первый хост',j.first_host],['Последний хост',j.last_host],
+    ['Всего адресов',j.total.toLocaleString('ru-RU')],['Доступно хостов',j.usable.toLocaleString('ru-RU')]]
+    .map(([k,v])=>'<div class="k">'+k+'</div><div class="v">'+(v??'—')+'</div>').join('');
+};
+
+/* --- units converter --- */
+$('#unitForm').onsubmit=async e=>{
+  e.preventDefault();
+  const j=await api('/api/tools/units?value='+encodeURIComponent($('#unitVal').value)+'&from='+encodeURIComponent($('#unitFrom').value));
+  const out=$('#unitOut');
+  if(!j.ok){out.innerHTML='<div class="k">Ошибка</div><div class="v">'+(j.error||'')+'</div>';return;}
+  out.innerHTML=Object.entries(j.results).map(([k,v])=>'<div class="k">'+k+'</div><div class="v">'+Number(v).toLocaleString('ru-RU',{maximumFractionDigits:4})+'</div>').join('');
+};
+})();
