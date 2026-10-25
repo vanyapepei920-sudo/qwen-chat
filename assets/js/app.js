@@ -154,7 +154,8 @@ async function onGoogleCredential(resp){
   }catch(e){setLoader(false);toast('Сервер недоступен: '+e.message,'err');}
 }
 function initGoogleButton(){const box=$('#gAlert');
-  if(NP.clientId&&window.google&&google.accounts&&google.accounts.id){try{
+  if(!NP.clientId){if(box)box.innerHTML='<div class="alert">⚠ Client ID не найден. Добавьте GOOGLE_CLIENT_ID в файл <b>.env</b> (и при необходимости GOOGLE_CLIENT_SECRET), затем <b>полностью перезапустите сервер</b>: Ctrl+C → python app.py. Файл .env читается только при старте.</div>';return;}
+  if(window.google&&google.accounts&&google.accounts.id){try{
     google.accounts.id.initialize({client_id:NP.clientId,callback:onGoogleCredential,auto_select:false,cancel_on_tap_outside:true,ux_mode:'popup'});
     google.accounts.id.renderButton($('#gbtn'),{theme:'filled_black',size:'large',shape:'pill',text:AUTH_MODE==='register'?'signup_with':'continue_with',logo_alignment:'center',width:320,locale:'ru'});
     if(box)box.innerHTML='<div class="alert ok">✓ Google подключён. Аккаунт будет запомнен для быстрого входа.</div>';return;}catch(e){console.warn(e);}}
