@@ -5,6 +5,14 @@ const nf=(v,d=2)=>isFinite(v)?Number(v).toFixed(d).replace('.',','):'—';
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const NP=window.NP||{};
 
+/* ===== склонение слов ===== */
+function plural(n, one, few, many){
+  const m10=n%10, m100=n%100;
+  if(m10===1&&m100!==11)return one;
+  if(m10>=2&&m10<=4&&(m100<10||m100>=20))return few;
+  return many;
+}
+
 /* ===== loader / toast ===== */
 const qwPill=$('#qwPill');
 function qwText(t,s){if(t!==undefined)$('#qwTitle').textContent=t;if(s!==undefined)$('#qwSub').textContent=s;}
@@ -185,4 +193,16 @@ updateOnline();
       if(d<132){ctx.strokeStyle='rgba(0,229,255,'+(.16*(1-d/132))+')';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(nodes[i].x,nodes[i].y);ctx.lineTo(nodes[j].x,nodes[j].y);ctx.stroke();}}
     for(const n of nodes){ctx.fillStyle='rgba(180,220,255,.55)';ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,6.2832);ctx.fill();}requestAnimationFrame(fr);})();rs();})();
 
-window.NPK={$, $$,sleep,nf,clamp,Chart,Net,makeMeter,downloadStream,pingPhase,downloadPhase,uploadPhase,quickMeasure,simPhase,simSpeed,getPayload,estimateBand,fetchMeta,quality,History,Prefs,setLoader,setQwCard,qwText,toast,renderUser};
+/* ===== уведомления (колокол) ===== */
+(function(){const btn=document.getElementById('bellBtn');if(!btn)return;
+  const panel=document.getElementById('notifPanel'),list=document.getElementById('notifList'),badge=document.getElementById('bellBadge');
+  async function refresh(){try{const j=await fetch('/api/notifications',{credentials:'include'}).then(r=>r.json());
+    if(!j.ok)return; badge.hidden=!j.unread; badge.textContent=j.unread>9?'9+':j.unread;
+    list.innerHTML=j.items.length?j.items.map(n=>'<div class="np-item'+(n.read?' read':'')+'"><span class="np-ic">'+(n.kind==='monitor'?'📡':'ℹ️')+'</span><div><div>'+n.text.replace(/</g,'&lt;')+'</div><small>'+new Date(n.ts).toLocaleString('ru-RU')+'</small></div></div>').join(''):'<small style="opacity:.6">Пока пусто</small>';
+  }catch(e){}}
+  btn.onclick=e=>{e.stopPropagation();panel.hidden=!panel.hidden;if(!panel.hidden)refresh();};
+  document.addEventListener('click',e=>{if(!panel.hidden&&!document.getElementById('notifWrap').contains(e.target))panel.hidden=true;});
+  document.getElementById('notifReadAll').onclick=async()=>{await fetch('/api/notifications/read',{method:'POST',credentials:'include'});refresh();};
+  refresh();setInterval(refresh,60000);})();
+
+window.NPK={$, $$,sleep,nf,clamp,plural,Chart,Net,makeMeter,downloadStream,pingPhase,downloadPhase,uploadPhase,quickMeasure,simPhase,simSpeed,getPayload,estimateBand,fetchMeta,quality,History,Prefs,setLoader,setQwCard,qwText,toast,renderUser};

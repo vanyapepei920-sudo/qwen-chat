@@ -29,11 +29,19 @@
     <a href="{{ url_for('wifi') }}"       data-tab="wifi">📶 Wi‑Fi</a>
     <a href="{{ url_for('search') }}"     data-tab="search">🔎 Поиск</a>
     <a href="{{ url_for('history') }}"    data-tab="history">🗂 История</a>
+    <a href="{{ url_for('monitor') }}"    data-tab="monitor">📡 Мониторинг</a>
     <a href="{{ url_for('settings') }}"   data-tab="settings">⚙ Настройки</a>
     <a href="{{ url_for('about') }}"      data-tab="about">ℹ О проекте</a>
   </div>
   <div class="topnav-right">
     <div class="status-pill" id="netStatus"><span class="dot on"></span><span id="netStatusTxt">онлайн</span></div>
+    <div class="notif-wrap" id="notifWrap">
+      <button class="icon-btn" id="bellBtn" title="Уведомления">🔔<span class="badge" id="bellBadge" hidden>0</span></button>
+      <div class="notif-panel glass" id="notifPanel" hidden>
+        <div class="np-head"><b>Уведомления</b><button class="btn sm ghost" id="notifReadAll">Прочитать все</button></div>
+        <div id="notifList"><small style="opacity:.6">Загрузка…</small></div>
+      </div>
+    </div>
     <div class="user-chip"><div id="avatarBox"></div>
       <div><div class="nm" id="userName">{{ user.name }}</div><div class="em" id="userMail">{{ user.email }}</div></div></div>
     <button class="btn sm ghost danger" id="signOutBtn">Выйти</button>
