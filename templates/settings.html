@@ -29,6 +29,7 @@
     <div class="card-h"><h3>🧑‍💻 Developer API — свои ключи для ваших сайтов</h3><div class="spacer"></div>
       <span class="tag">sp-test-… / sp-live-… · CORS открыт</span></div>
     <p style="color:var(--muted);font-size:13px;margin:0 0 10px">Создайте ключ и используйте наши эндпоинты со <b>своего</b> сайта или скрипта: ping, статус URL, DNS, whois, поиск Google, подсети, единицы, uptime-мониторинг. Ключ передаётся заголовком <code style="font-family:var(--mono)">X-NetPulse-Key</code>.</p>
+    <p style="margin:0 0 12px;font-size:13px">🌐 Базовый адрес API (как у OpenAI): <code style="font-family:var(--mono);background:rgba(0,0,0,.35);padding:2px 8px;border-radius:6px;color:var(--acc2)">https://help.reallyvisuals.cloudpub.ru/api/v1</code></p>
     <form class="s-form" id="dkForm" autocomplete="off" style="flex-wrap:wrap;gap:8px">
       <input class="inp" id="dkName" placeholder="Название (например «мой сайт»)">
       <select id="dkEnv" class="sel" title="Окружение ключа">
@@ -54,8 +55,9 @@
       <tbody id="dkBody"><tr><td colspan="7" class="empty">Загрузка…</td></tr></tbody></table></div>
     <div id="dkEditBox"></div>
     <details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px;color:var(--muted)">📖 Примеры использования на своём сайте</summary>
-      <pre style="font-family:var(--mono);font-size:12px;overflow:auto;background:rgba(0,0,0,.25);padding:12px;border-radius:8px">// JavaScript — с любого сайта:
-const r = await fetch("https://ВАШ-NETPULSE/api/v1/ping?url=https://example.com",
+      <pre style="font-family:var(--mono);font-size:12px;overflow:auto;background:rgba(0,0,0,.25);padding:12px;border-radius:8px">// JavaScript — с любого сайта (базовый адрес как у OpenAI):
+const BASE = "https://help.reallyvisuals.cloudpub.ru/api/v1";
+const r = await fetch(BASE + "/ping?url=https://example.com",
   {headers:{"X-NetPulse-Key":"sp-test-ВАШ_КЛЮЧ"}});
 const j = await r.json();  // {ok:true, reachable:true, latency_ms:42.1}
 

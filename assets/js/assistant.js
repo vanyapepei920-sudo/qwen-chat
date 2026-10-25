@@ -1,26 +1,54 @@
 /* Бот-помощник + мобильное меню */
 (function(){const K=window.NPK,$=K.$,nf=K.nf;
 
-  /* --- мобильный бургер: переносим вкладки в выпадающее меню --- */
-  function buildBurger(){
-    const nav=document.querySelector('.topnav'); if(!nav||$('#burgerBtn'))return;
-    const b=document.createElement('button'); b.className='icon-btn burger'; b.id='burgerBtn'; b.textContent='☰';
-    const menu=document.createElement('div'); menu.className='mob-menu glass'; menu.id='mobMenu'; menu.hidden=true;
-    nav.insertBefore(b, nav.querySelector('.tabs'));
-    nav.appendChild(menu);
-    b.onclick=()=>{menu.hidden=!menu.hidden;};
-    document.addEventListener('click',e=>{if(!menu.hidden&&!menu.contains(e.target)&&e.target!==b)menu.hidden=true;});
+  /* --- мобильная полоса вкладок: скролл свайпом + автопрокрутка к активной --- */
+  function initTabs(){
+    const tabs=document.getElementById('tabs'); if(!tabs)return;
+    // перетаскивание вкладки пальцем/мышью горизонтально не мешает клику — браузер сам делает scroll по touch
+    // доводим активную вкладку в центр полосы при загрузке
+    const act=tabs.querySelector('a.active');
+    if(act){ try{ tabs.scrollLeft=act.offsetLeft-(tabs.clientWidth-act.offsetWidth)/2; }catch(e){} }
+    // плавный скролл колесом мыши (вертикальное колесо -> горизонтальная полоса)
+    tabs.addEventListener('wheel',e=>{ if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ tabs.scrollLeft+=e.deltaY; e.preventDefault(); } },{passive:false});
   }
-  function syncMobMenu(){
-    const menu=$('#mobMenu'); if(!menu)return;
-    const links=[...document.querySelectorAll('.tabs a')];
-    menu.innerHTML=links.map(a=>'<a href="'+a.getAttribute('href')+'" class="'+(a.classList.contains('active')?'active':'')+'">'+a.textContent+'</a>').join('');
-  }
+  function syncMobMenu(){} /* legacy: больше не используется */
+  initTabs(); /* автозапуск на всех страницах, где есть .tabs */
 
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  /* --- Markdown-lite рендер для ответов бота: **жирный**, *курсив*, `код`, ```блоки кода``` --- */
+  function copyCode(btn){
+    const pre=btn.parentElement, code=pre.querySelector('code');
+    try{ navigator.clipboard.writeText(code.textContent); btn.textContent='Скопировано ✓';
+      setTimeout(()=>btn.textContent='Копировать',1500);}catch(e){btn.textContent='Не удалось';}
+  }
+  window.copyCode=copyCode;
+  function renderMd(src){
+    const blocks=[];
+    // вырезаем fenced-блоки кода ```...``` (с опциональным языком)
+    let s=String(src||'').replace(/```(\w*)\n?([\s\S]*?)```/g,(m,lang,code)=>{
+      blocks.push({lang:(lang||'').trim(),code}); return '\u0000B'+(blocks.length-1)+'\u0000';});
+    // инлайн-код `...`
+    const inlines=[];
+    s=s.replace(/`([^`\n]+)`/g,(m,c)=>{inlines.push(c); return '\u0000I'+(inlines.length-1)+'\u0000';});
+    s=esc(s);
+    s=s.replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>');           // **жирный**
+    s=s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,'$1<i>$2</i>'); // *курсив*
+    s=s.replace(/^### (.+)$/gm,'<b style="font-size:14px">$1</b>');
+    s=s.replace(/^## (.+)$/gm,'<b style="font-size:14.5px">$1</b>');
+    s=s.replace(/^[-•*] (.+)$/gm,'• $1');
+    s=s.replace(/\n/g,'<br>');
+    s=s.replace(/\u0000I(\d+)\u0000/g,(m,i)=>'<code>'+esc(inlines[+i])+'</code>');
+    s=s.replace(/\u0000B(\d+)\u0000/g,(m,i)=>{const b=blocks[+i];
+      return '<pre class="code-block">'+(b.lang?'<span class="code-lang">'+esc(b.lang)+'</span>':'')+
+        '<button class="code-copy" type="button" onclick="copyCode(this)">Копировать</button>'+
+        '<code>'+esc(b.code.replace(/\n$/,''))+'</code></pre>';});
+    return s;
+  }
   function addMsg(role,text){
     const d=document.createElement('div'); d.className='msg '+role;
-    d.innerHTML='<div class="bubble">'+esc(text).replace(/\n/g,'<br>')+'</div>';
+    const html=role==='assistant'?renderMd(text):esc(text).replace(/\n/g,'<br>');
+    d.innerHTML='<div class="bubble">'+html+'</div>';
     $('#chatLog').appendChild(d); $('#chatLog').scrollTop=1e9; return d;
   }
 
@@ -44,19 +72,19 @@
         headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
       const j=await r.json();
       typing.querySelector('.bubble').classList.remove('typing');
-      typing.querySelector('.bubble').innerHTML=esc(j.reply||'…').replace(/\n/g,'<br>');
+      typing.querySelector('.bubble').innerHTML=renderMd(j.reply||'…');
     }catch(e){typing.querySelector('.bubble').textContent='⚠ Сеть недоступна';}
     btn.disabled=false; $('#chatText').focus();
   }
 
   if(document.body.dataset.page==='assistant'){
-    buildBurger(); syncMobMenu(); loadHistory();
+    initTabs(); loadHistory();
     $('#chatForm').onsubmit=e=>{e.preventDefault();send($('#chatText').value);};
     $('#quickList').onclick=e=>{const q=e.target.closest('.q-btn');if(q)send(q.textContent);};
     $('#asClear').onclick=async()=>{if(!confirm('Очистить историю диалога?'))return;
       await fetch('/api/chat',{method:'DELETE',credentials:'include'});loadHistory();};
   } else {
-    // на всех страницах: гарантируем бургер для узких экранов
-    buildBurger(); syncMobMenu();
+    // на всех страницах: полоса вкладок со скроллом
+    initTabs();
   }
 })();

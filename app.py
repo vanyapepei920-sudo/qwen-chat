@@ -677,6 +677,8 @@ def dev_info():
                    allowed_origins=(k["allowed_origins"] or "*").split(","),
                    expires_at=k["expires_at"] or None, total_calls=k["calls"],
                    owner=g.dev["user"].get("name"), api_version="v1",
+                   base_url="https://help.reallyvisuals.cloudpub.ru/api/v1",
+                   auth_header="X-NetPulse-Key: sp-test-… (или Authorization: Bearer sp-…)",
                    endpoints=["/api/v1/info","/api/v1/ping?url=","/api/v1/status?url=",
                               "/api/v1/dns?host=","/api/v1/whois?domain=","/api/v1/search?q=",
                               "/api/v1/subnet?cidr=","/api/v1/units?v=&from=&to=",
@@ -868,9 +870,20 @@ ASSISTANT_SYSTEM_PROMPT = (
     "Настройки (профиль, Developer API ключи вида sp-test-… или sp-live-…, scopes basic/net/search, "
     "лимит запросов в минуту, дневная квота, разрешённые Origin, срок действия, отзыв/ротация ключей), "
     "О проекте. Вход — только через Google.\n"
-    "Developer API: GET /api/v1/info|ping|status|dns|whois|search|subnet|units|ip|uptime, "
-    "ключ передаётся заголовком X-NetPulse-Key или Authorization: Bearer, CORS открыт для сторонних сайтов.\n"
-    "Отвечай кратко (до ~120 слов) по-русски, дружелюбно, шаг за шагом. Если вопрос не про NetPulse, "
+    "Developer API (публичный, как у OpenAI): базовый адрес https://help.reallyvisuals.cloudpub.ru , "
+    "эндпоинты: GET /api/v1/info|ping?url=|status?url=|dns?host=|whois?domain=|search?q=&mode=|"
+    "subnet?cidr=|units?v=&from=&to=|ip|uptime; POST /api/v1/uptime {url,interval_sec}. "
+    "Ключ передаётся заголовком 'X-NetPulse-Key: sp-test-…' (или 'Authorization: Bearer sp-…'). "
+    "CORS открыт — можно вызывать fetch() прямо со сторонних сайтов.\n"
+    "Пример для пользователя (показывай кодом):\n"
+    "```js\nconst r = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/ping?url=https://example.com',\n"
+    "  {headers:{'X-NetPulse-Key':'sp-test-ВАШ_КЛЮЧ'}});\nconsole.log(await r.json());\n```\n"
+    "ФОРМАТИРОВАНИЕ ОТВЕТОВ (обязательно): пиши в лёгком Markdown — **жирный** для важного, "
+    "*курсив* для акцентов, `код/команды/URL` в обратных кавычках, списки через «- ». "
+    "Любой код (JS, curl, Python, JSON) оформляй fenced-блоками с указанием языка:\n"
+    "```js\n...\n```\nИнтерфейс сайта отрисует жирный шрифт и блоки кода с кнопкой «Копировать». "
+    "Не используй таблицы и HTML-теги.\n"
+    "Отвечай кратко (до ~150 слов) по-русски, дружелюбно, шаг за шагом. Если вопрос не про NetPulse, "
     "сеть или компьютеры — вежливо откажи и верни тему. Не выдумывай функции, которых нет."
 )
 
