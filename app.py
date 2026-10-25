@@ -9,7 +9,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from flask import (Flask, render_template, request, jsonify, session,
-                   g, redirect, url_for, Response)
+                   g, redirect, url_for, Response, make_response)
 from flask_cors import CORS
 
 try:
@@ -595,8 +595,15 @@ def tokens_revoke(tid):
 # Ключи создаются в Настройках → «Developer API». Используются с ЛЮБОГО сайта/скрипта:
 #   fetch("https://ваш-netpulse/api/v1/ping?url=https://example.com",
 #         {headers:{'X-NetPulse-Key':'npk_...'}})
-DEV_SCOPES = {"basic": ["ping", "status", "speed"], "net": ["dns", "whois", "trace", "latency"],
-              "search": ["search"]}
+# все эндпоинты API (для scope=all и карточек /api/v1, /api/v1/info)
+DEV_ENDPOINTS = ["/info", "/ping?url=", "/status?url=", "/latency?host=&port=&n=",
+                 "/speedtest/start?bytes=&downloads=&upload=true", "/speedtest/result?id=",
+                 "/speed?bytes=&downloads=&upload=", "/trace?url=", "/dns?host=", "/whois?domain=",
+                 "/search?q=", "/subnet?cidr=", "/units?v=&from=&to=", "/ip", "/uptime?url=&interval_sec="]
+DEV_SCOPES = {"basic": ["ping", "status", "speed", "info"], "net": ["dns", "whois", "trace", "latency"],
+              "search": ["search"],
+              "all": ["ping", "status", "speed", "dns", "whois", "trace", "latency", "search",
+                      "subnet", "units", "ip", "uptime", "info"]}
 
 def _gen_key(env="test"):
     """sp-<env>-aj21ak-14ddad-3144d-3f4ffw — человекочитаемый ключ с префиксом окружения."""
@@ -677,29 +684,54 @@ def dev_required(fn):
     def w(*a, **k):
         auth, err = _dev_auth()
         if not auth:
+            # «как у всех»: публичные диагностические эндпоинты работают и без ключа
+            if public_allowed():
+                g.dev = None
+                return fn(*a, **k)
+            # без ключа → 403 Forbidden (+подсказка), невалидный ключ → тоже 403,
+            # лимиты/квоты → 429 Too Many Requests с заголовком Retry-After
+            status = {"rate_limited": 429, "quota_exceeded": 429}.get(err, 403)
             hint = {"invalid_key":"Ключ не найден, выключен или отозван. Проверьте статус в Настройках → Developer API.",
+                    "expired_key":"Срок действия ключа истёк — создайте новый или продлите в настройках ключа.",
+                    "origin_denied":"Запрос с этого Origin запрещён настройкой «Разрешённые домены» ключа.",
                     "rate_limited":"Превышен лимит запросов в минуту (настройка ключа «Лимит»).",
                     "quota_exceeded":"Исчерпана дневная квота ключа (настройка «Дневная квота»).",
-                    "expired_key":"Срок действия ключа истёк — создайте новый или продлите в настройках ключа.",
-                    "origin_denied":"Запрос с этого Origin запрещён настройкой «Разрешённые домены» ключа."}
-            return jsonify(ok=False, error=err or "missing_key",
-                           hint=hint.get(err, "Передайте ключ: заголовок 'X-NetPulse-Key: sp-test-…' или ?key=sp-test-…")), \
-                   429 if err=="rate_limited" else 401
+                    "missing_key":"Требуется API-ключ. Создайте его: сайт → Настройки → Developer API."}
+            resp = jsonify(ok=False, error=err or "missing_key", code=status,
+                           message="Forbidden: API key required" if status==403 else "Too Many Requests",
+                           type={"rate_limited":"rate_limit_error","quota_exceeded":"rate_limit_error"
+                                 }.get(err, "authentication_error"),
+                           hint=hint.get(err, "Передайте ключ: заголовок 'X-NetPulse-Key: sp-test-…'"),
+                           docs="/api/v1")
+            r = make_response(resp); r.status_code = status
+            if status == 429: r.headers["Retry-After"] = "60"
+            if status == 403: r.headers["WWW-Authenticate"] = 'Bearer realm="NetPulse API", error="%s"' % (err or "missing_key")
+            return r
         g.dev = auth
         try:
             return fn(*a, **k)
         except Exception as e:               # чтобы вместо «голой» 500 был понятный JSON
             log.exception("dev api %s failed", request.path)
-            return jsonify(ok=False, error="server_error", detail=str(e)[:200]), 500
+            return jsonify(ok=False, error="server_error", code=500, detail=str(e)[:200]), 500
     return w
 
+def public_allowed():
+    """Без ключа разрешены только публичные диагностические эндпоинты (как health-check у всех)."""
+    return request.path in ("/api/v1/ping", "/api/v1/status", "/api/v1/ip")
+
 def _dev_scope(name):
+    if g.dev is None:            # публичный вызов без ключа — разрешены только public_allowed() эндпоинты
+        return None
     sc = (g.dev["key"]["scopes"] or "basic").split(",")
     allowed = [e for s in sc for e in DEV_SCOPES.get(s, [])]
     if name not in allowed:
-        return jsonify(ok=False, error="scope_denied", scope=name,
+        resp = jsonify(ok=False, error="insufficient_scope", scope=name, code=403,
+                       message="Forbidden: insufficient scope",
                        hint="Добавьте scope '%s' при создании ключа (пересоздайте ключ)." %
-                            next((s for s,e in DEV_SCOPES.items() if name in e), name)), 403
+                            next((s for s,e in DEV_SCOPES.items() if name in e), name))
+        r = make_response(resp); r.status_code = 403
+        r.headers["WWW-Authenticate"] = 'Bearer realm="NetPulse API", error="insufficient_scope"'
+        return r
     return None
 
 @app.route("/api/v1")
@@ -710,8 +742,11 @@ def dev_root():
                    auth={"header": "X-NetPulse-Key: sp-test-…",
                          "alt": "Authorization: Bearer sp-test-… или ?key=sp-test-…",
                          "where": "Создайте ключ: сайт → Настройки → Developer API"},
-                   endpoints=["/api/v1/info (нужен ключ)","/api/v1/ping?url=","/api/v1/status?url=",
-                              "/api/v1/latency?host=&port=&n=","/api/v1/speed?bytes=&downloads=&upload=",
+                   public_endpoints=["GET /api/v1 (эта карточка)", "GET /api/v1/ping?url=",
+                                     "GET /api/v1/status?url=", "GET /api/v1/ip"],
+                   endpoints=["/api/v1/info","/api/v1/ping?url=","/api/v1/status?url=",
+                              "/api/v1/latency?host=&port=&n=","/api/v1/speedtest/start?bytes=&downloads=&upload=true",
+                              "/api/v1/speedtest/result?id=","/api/v1/speed?bytes=&downloads=&upload=",
                               "/api/v1/trace?url=","/api/v1/dns?host=","/api/v1/whois?domain=",
                               "/api/v1/search?q=","/api/v1/subnet?cidr=","/api/v1/units?v=&from=&to=",
                               "/api/v1/ip","/api/v1/uptime?url=&interval_sec="],
@@ -720,6 +755,8 @@ def dev_root():
 @app.route("/api/v1/info")
 @dev_required
 def dev_info():
+    denied = _dev_scope("info")
+    if denied: return denied
     k = g.dev["key"]
     return jsonify(ok=True, key_name=k["name"], env=k["env"], scopes=k["scopes"].split(","),
                    rate_limit_per_min=k["rate_limit"], quota_day=k["quota_day"],
@@ -737,6 +774,85 @@ def dev_info():
                    services=["speedtest (наш спидтест через Cloudflare edge)", "ping", "latency/jitter",
                              "traceroute", "dns", "whois", "google search", "subnet calculator",
                              "unit converter", "ip info", "uptime monitoring"])
+
+# ---------- СПИДТЕСТ ЧЕРЕЗ API (asynchronous, как у нормальных провайдеров) ----------
+# POST/GET /api/v1/speedtest/start  → id задания; сервер измеряет down/up/ping в фоне
+# GET  /api/v1/speedtest/result?id= → статус queued|running|done|error и метрики
+SPEED_JOBS = {}
+
+def _speed_job(job_id, mb, conns, do_up):
+    """Фоновое выполнение спидтеста для задания job_id."""
+    SPEED_JOBS[job_id]["status"] = "running"
+    payload = b"\0" * (mb * 1_000_000)
+    from concurrent.futures import ThreadPoolExecutor
+    def dl(_i):
+        t0 = time.perf_counter()
+        try:
+            r = http_lib.get(f"https://speed.cloudflare.com/__down?bytes={mb*1_000_000}&r={time.time():.6f}{_i}",
+                             stream=True, timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
+            got = 0
+            for chunk in r.iter_content(65536):
+                got += len(chunk)
+            dt = time.perf_counter() - t0
+            return round(got * 8 / dt / 1e6, 1) if dt > 0 else 0.0
+        except Exception:
+            return None
+    try:
+        with ThreadPoolExecutor(max_workers=conns) as ex:
+            results = [x for x in ex.map(dl, range(conns)) if x is not None]
+        down = round(sum(results)/len(results), 1) if results else 0.0
+        up = None
+        if do_up:
+            try:
+                t0 = time.perf_counter()
+                http_lib.post("https://speed.cloudflare.com/__up", data=payload[:2_000_000],
+                              timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
+                dt = time.perf_counter() - t0
+                up = round(2_000_000 * 8 / dt / 1e6, 1) if dt > 0 else 0.0
+            except Exception:
+                up = None
+        ping = None
+        try:
+            t0 = time.perf_counter()
+            http_lib.head("https://speed.cloudflare.com/meta", timeout=10)
+            ping = round((time.perf_counter()-t0)*1000, 1)
+        except Exception:
+            pass
+        SPEED_JOBS[job_id].update(status="done", download_mbps=down, upload_mbps=up, ping_ms=ping,
+                                  finished_at=datetime.now().isoformat(timespec="seconds"))
+    except Exception as e:
+        SPEED_JOBS[job_id].update(status="error", error=str(e)[:200])
+
+@app.route("/api/v1/speedtest/start", methods=["GET", "POST"])
+@dev_required
+def dev_speedtest_start():
+    denied = _dev_scope("speed")
+    if denied: return denied
+    mb   = min(max(int(request.values.get("bytes", 5)), 1), 25)
+    conns= min(max(int(request.values.get("downloads", 3)), 1), 6)
+    do_up= str(request.values.get("upload", "false")).lower() in ("1","true","yes")
+    # держим не более ~50 заданий: чистим старые завершённые
+    if len(SPEED_JOBS) > 50:
+        for jid, v in list(SPEED_JOBS.items()):
+            if v["status"] in ("done","error"): SPEED_JOBS.pop(jid, None)
+    import uuid as _u
+    jid = _u.uuid4().hex[:12]
+    SPEED_JOBS[jid] = {"id": jid, "status": "queued", "streams": conns, "sample_mb": mb,
+                       "upload": do_up, "created_at": datetime.now().isoformat(timespec="seconds")}
+    threading.Thread(target=_speed_job, args=(jid, mb, conns, do_up), daemon=True).start()
+    return jsonify(ok=True, id=jid, status="queued",
+                   poll="/api/v1/speedtest/result?id=%s" % jid,
+                   hint="Опрашивайте result каждые 2 сек до status=done")
+
+@app.route("/api/v1/speedtest/result")
+@dev_required
+def dev_speedtest_result():
+    denied = _dev_scope("speed")
+    if denied: return denied
+    jid = (request.args.get("id") or "").strip()
+    job = SPEED_JOBS.get(jid)
+    if not job: return jsonify(ok=False, error="job_not_found", hint="Сначала вызовите /api/v1/speedtest/start"), 404
+    return jsonify(ok=True, **job)
 
 @app.route("/api/v1/ping")
 @dev_required
@@ -928,6 +1044,8 @@ def dev_search():
 @app.route("/api/v1/subnet")
 @dev_required
 def dev_subnet_api():
+    denied = _dev_scope("subnet")
+    if denied: return denied
     cidr = (request.args.get("cidr") or "").strip()
     m = re.match(r"^(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,2})$", cidr)
     if not m: return jsonify(ok=False, error="bad_cidr", example="192.168.1.10/24"), 400
@@ -945,6 +1063,8 @@ def dev_subnet_api():
 @app.route("/api/v1/units")
 @dev_required
 def dev_units_api():
+    denied = _dev_scope("units")
+    if denied: return denied
     val = request.args.get("v"); frm = request.args.get("from","mbps"); to = request.args.get("to","auto")
     try: val=float(val)
     except (TypeError,ValueError): return jsonify(ok=False, error="bad_value"), 400
@@ -1062,20 +1182,26 @@ ASSISTANT_SYSTEM_PROMPT = (
     "Developer API (публичный, как у OpenAI): базовый адрес https://help.reallyvisuals.cloudpub.ru , "
     "эндпоинты: GET /api/v1/info|ping?url=|status?url=|latency?host=&port=&n=|speed?bytes=&downloads=&upload=|"
     "trace?url=|dns?host=|whois?domain=|search?q=&mode=|subnet?cidr=|units?v=&from=&to=|ip|uptime; "
-    "POST /api/v1/uptime {url,interval_sec}. "
+    "POST /api/v1/uptime {url,interval_sec}. Спидтест через API — асинхронный: "
+    "GET/POST /api/v1/speedtest/start?bytes=1..25&downloads=1..6&upload=true → вернёт id задания, "
+    "затем опрашивать GET /api/v1/speedtest/result?id= каждые ~2 сек до status=done (download_mbps, upload_mbps, ping_ms). "
+    "Без ключа работают только публичные эндпоинты: карточка /api/v1, /api/v1/ping, /api/v1/status и /api/v1/ip; "
+    "остальные требуют ключ и вернут 403 Forbidden с подсказкой, при превышении лимита — 429 Too Many Requests. "
     "Ключ передаётся заголовком 'X-NetPulse-Key: sp-test-…' (или 'Authorization: Bearer sp-…'). "
     "CORS открыт — можно вызывать fetch() прямо со сторонних сайтов.\n"
-    "Через API доступны ВСЕ наши сервисы: спидтест (/api/v1/speed — серверный замер скорости через "
+    "Через API доступны ВСЕ наши сервисы: спидтест (/api/v1/speedtest/start+result или быстрый синхронный /api/v1/speed — серверный замер скорости через "
     "Cloudflare edge, параметры bytes=1..25 МБ, downloads=1..6 потоков, upload=true → download_mbps, "
     "upload_mbps, ping_ms), пинг и задержка (/api/v1/ping, /api/v1/latency с avg/min/max/jitter), "
     "трассировка (/api/v1/trace), DNS, WHOIS, поиск Google, калькулятор подсетей, конвертер единиц, "
     "IP-инфо и uptime-мониторинг. Если пользователь хочет использовать наш спидтест или сеть-сервисы "
     "на своём сайте — покажи пример с нужным эндпоинтом.\n"
     "Пример для пользователя (показывай кодом):\n"
-    "```js\n// скорость интернета через наш API\nconst s = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/speed?bytes=10&downloads=4',\n"
-    "  {headers:{'X-NetPulse-Key':'sp-test-ВАШ_КЛЮЧ'}});\nconsole.log((await s.json())); // download_mbps, upload_mbps, ping_ms\n"
-    "// пинг до сайта\nconst p = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/ping?url=https://example.com',\n"
-    "  {headers:{'X-NetPulse-Key':'sp-test-ВАШ_КЛЮЧ'}});\nconsole.log((await p.json()));\n```\n"
+    "```js\n// спидтест через наш API (асинхронно: старт + опрос результата)\nconst H={headers:{'X-NetPulse-Key':'sp-test-ВАШ_КЛЮЧ'}};\n"
+    "const st = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/speedtest/start?bytes=10&downloads=4&upload=true',H).then(r=>r.json());\n"
+    "let res; do { await new Promise(x=>setTimeout(x,2000));\n"
+    "  res = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/speedtest/result?id='+st.id,H).then(r=>r.json());\n"
+    "} while(res.status!=='done' && res.status!=='error');\nconsole.log(res); // download_mbps, upload_mbps, ping_ms\n"
+    "// пинг до сайта (работает даже без ключа)\nconst p = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/ping?url=https://example.com');\nconsole.log((await p.json()));\n```\n"
     "ФОРМАТИРОВАНИЕ ОТВЕТОВ (обязательно): пиши в лёгком Markdown — **жирный** для важного, "
     "*курсив* для акцентов, `код/команды/URL` в обратных кавычках, списки через «- ». "
     "Любой код (JS, curl, Python, JSON) оформляй fenced-блоками с указанием языка:\n"

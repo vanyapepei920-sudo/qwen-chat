@@ -38,6 +38,7 @@
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="basic" checked> basic (ping/status/speed)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="net"> net (dns/whois/trace/latency)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="search"> search (Google)</label>
+      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="dkAll" value="all"> ✨ all — доступ ко всем сервисам сразу</label>
       <select id="dkRate" class="sel" title="Лимит запросов в минуту">
         <option value="30">30 зап./мин</option><option value="60" selected>60 зап./мин</option>
         <option value="120">120 зап./мин</option><option value="300">300 зап./мин</option>
@@ -63,7 +64,9 @@ const j = await r.json();  // {ok:true, reachable:true, latency_ms:42.1}
 
 // curl / Python:
 //   GET /api/v1/status?url=https://site.ru     — up/down, HTTP-код, задержка
-//   GET /api/v1/speed?bytes=10&downloads=4     — СПИДТЕСТ через наши серверы (↓/↑ Мбит/с, пинг)
+//   GET /api/v1/speedtest/start?bytes=10&downloads=4&upload=true → id; затем
+//   GET /api/v1/speedtest/result?id=…          — СПИДТЕСТ через наши серверы (↓/↑ Мбит/с, пинг)
+//   GET /api/v1/speed?bytes=10&downloads=4     — быстрый синхронный спидтест
 //   GET /api/v1/latency?host=site.ru&n=5       — avg/min/max/jitter задержки до узла
 //   GET /api/v1/trace?url=https://site.ru      — трассировка пути через CDN edge
 //   GET /api/v1/dns?host=site.ru               — A/AAAA записи
