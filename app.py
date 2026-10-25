@@ -466,7 +466,9 @@ def monitors_run(mid):
     db.execute("INSERT INTO monitor_results(monitor_id,ts,ok,status,latency_ms,error) VALUES(?,?,?,?,?,?)",
         (mid, now, 1 if res["ok"] else 0, res["status"], res["latency_ms"], res.get("error")))
     db.execute("UPDATE monitors SET last_check=? WHERE id=?",(now,mid))
-    if prev is not None and bool(prev["ok"]) != res["ok"]:   # смена состояния → уведомление
+    if prev is None and not res["ok"]:                        # сразу упал → уведомление
+        _notify(session["user"]["db_id"], "monitor", f"{mo['url']} ⛔ недоступен (HTTP {res['status'] or '—'})")
+    elif prev is not None and bool(prev["ok"]) != res["ok"]:  # смена состояния → уведомление
         state = "✅ снова доступен" if res["ok"] else "⛔ недоступен"
         _notify(session["user"]["db_id"], "monitor", f"{mo['url']} {state} (HTTP {res['status'] or '—'})")
     db.commit()
@@ -494,7 +496,9 @@ def run_due_monitors():
                 db.execute("INSERT INTO monitor_results(monitor_id,ts,ok,status,latency_ms,error) VALUES(?,?,?,?,?,?)",
                     (mo["id"], now, 1 if res["ok"] else 0, res["status"], res["latency_ms"], res.get("error")))
                 db.execute("UPDATE monitors SET last_check=? WHERE id=?",(now, mo["id"]))
-                if prev is not None and bool(prev["ok"]) != res["ok"]:
+                if prev is None and not res["ok"]:
+                    _notify(mo["user_id"], "monitor", f"{mo['url']} ⛔ недоступен (HTTP {res['status'] or '—'})")
+                elif prev is not None and bool(prev["ok"]) != res["ok"]:
                     state = "✅ снова доступен" if res["ok"] else "⛔ недоступен"
                     _notify(mo["user_id"], "monitor", f"{mo['url']} {state} (HTTP {res['status'] or '—'})")
                 db.commit()
