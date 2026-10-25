@@ -5,6 +5,8 @@ from datetime import timedelta, datetime
 from functools import wraps
 
 import requests as http_lib
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from flask import (Flask, render_template, request, jsonify, session,
                    g, redirect, url_for, Response)
@@ -966,7 +968,7 @@ def dev_uptime_add():
 # адреса текстовых бэкендов помощника (в основном из .env; запасные — на случай сбоя основного)
 ASSISTANT_FALLBACK_URLS = [
     "https://text.pollinations.ai/openai",
-    "https://universal.pollinations.ai/openai",
+    "https://syntho.pollinations.ai/openai",
 ]
 
 def assistant_api_urls():
@@ -976,6 +978,30 @@ def assistant_api_urls():
         if fb not in urls:
             urls.append(fb)
     return urls
+
+
+class _AssistantSession(http_lib.Session):
+    """Отдельная сессия с keep-alive и повторными попытками на уровне соединения.
+    При обрыве TLS (SSLEOFError / ProtocolError) requests внутри urllib3 не
+    переиспользует «протухшее» соединение — каждое новое обращение получает свежий коннект."""
+
+    def __init__(self):
+        super().__init__()
+        retry = Retry(total=3, connect=3, read=2, backoff_factor=0.6,
+                      status_forcelist=[], allowed_methods=frozenset(["GET", "POST"]),
+                      raise_on_status=False)
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=8)
+        self.mount("https://", adapter)
+        self.mount("http://", adapter)
+
+
+_assistant_http = None
+
+def _assistant_client():
+    global _assistant_http
+    if _assistant_http is None:
+        _assistant_http = _AssistantSession()
+    return _assistant_http
 
 ASSISTANT_SYSTEM_PROMPT = (
     "Ты — Палс, встроенный помощник сайта NetPulse (сервис проверки скорости интернета, "
@@ -1028,11 +1054,12 @@ def _assistant_call(history, user_text):
                "seed": int(time.time()) % 100000,
                "temperature": 0.5, "max_tokens": 700}
     last_err = None
+    client = _assistant_client()
     # пробуем каждый адрес до 2 раз; при сетевых/SSL-сбоях переключаемся на следующий
     for url in assistant_api_urls():
         for attempt in range(2):
             try:
-                r = http_lib.post(url, json=payload, timeout=(10, 40))
+                r = client.post(url, json=payload, timeout=(10, 40))
                 try:
                     data = r.json()
                 except ValueError:
@@ -1076,7 +1103,12 @@ def chat_send():
                 (uid,)).fetchall()][::-1][:-1]
             reply = _assistant_call(history, text); status = 200
         except Exception as e:
-            reply = f"⚠ Ошибка помощника: {e}"; status = 502
+            log.warning("chat backend error: %s", e)
+            # не показываем пользователю технические детали (URL, стектрейсы)
+            reply = ("⚠ Сервис помощника сейчас недоступен — это внешняя сеть, "
+                     "а не ваш аккаунт. Попробуйте ещё раз через 10–20 секунд "
+                     "(или отправьте вопрос повторно чуть позже).")
+            status = 503
     db.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)", (uid, int(time.time()*1000), "assistant", reply))
     db.commit()
     return jsonify(ok=status==200, reply=reply), status
