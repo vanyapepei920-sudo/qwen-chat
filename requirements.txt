@@ -1,7 +1,0 @@
-# Всё, что нужно для запуска. Остальное — встроенные библиотеки Python (stdlib).
-flask>=3.0
-
-# Старый список зависимостей (те не нужны — заменены на stdlib-реализации):
-# authlib   -> Google OAuth реализован вручную на urllib + secrets/base64/json
-# requests  -> свой HTTP-клиент на urllib.request (см. class _Session в app.py)
-# python-dotenv -> свой мини-парсер .env (см. def load_dotenv в app.py)

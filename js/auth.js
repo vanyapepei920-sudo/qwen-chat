@@ -2,29 +2,62 @@
    Один index.html + js/ + css/ работают где угодно: GitHub Pages, Termux `python -m http.server`,
    локальный файл. Аккаунты Google проверяются на лету через Firebase Authentication.
 
-   КУДА ВСТАВИТЬ СВОИ КЛЮЧИ GOOGLE (нужно один раз): откройте вкладку «Настройки» → блок
-   «Google Sign-In» → вставьте 3 значения из консоли Firebase (Project settings → Your apps):
-     1) API key          (AIza...)
-     2) OAuth Client ID  (числа.apps.googleusercontent.com)
-     3) App ID           (номер проекта Firebase)
-   Они сохраняются в localStorage браузера и никуда не отправляются, кроме Google/Firebase.
-   Для продакшена добавьте домен сайта в Firebase Auth → Settings → Authorized domains.        */
+   КУДА ВСТАВИТЬ GOOGLE API KEY (нужно один раз) — три способа:
+     1) Прямо в этом файле: ниже в DEFAULTS замените заглушку "AIzaXXXX..."
+        на ваш ключ (AIzaSy...) и clientId ("числа.apps.googleusercontent.com").
+     2) Без правки файлов: откройте сайт с адресом
+        index.html?key=AIzaSy...&client=XXXX.apps.googleusercontent.com
+        — ключи сохранятся в localStorage браузера автоматически.
+     3) На сайте: вкладка «Настройки» → блок «🔑 Google Sign-In».
+   Значения из Firebase Console: Project settings → Your apps (Web) → API key / Client ID.
+   Для продакшена добавьте домен сайта в Firebase Auth → Settings → Authorized domains. */
 "use strict";
 
 var AUTH = (() => {
   const LS_KEY = "sn_auth_v1";
   const $ = (s) => document.querySelector(s);
 
-  // ── ключи по умолчанию (когда пользователь ещё ничего не сохранил) ──
+  /* ═══ КУДА ВСТАВИТЬ GOOGLE API KEY (один раз, вместо XXXXXXX...) ═══
+     Это Firebase/Google Cloud API-ключ (начинается с AIza...).
+     Как получить: https://console.cloud.google.com/apis/credentials →
+     «Create credentials» → «API key». Ключ публичный (виден в коде сайта),
+     поэтому ОБЯЗАТЕЛЬНО ограничьте его в Google Cloud Console:
+       Applications → HTTP referrers → домен вашего сайта;
+       APIs → разрешите только «Firebase Authentication API» / «Google Identity».
+
+     Три способа задать ключ — любой:
+       1) Впишите сюда вместо заглушки: apiKey: "AIzaSy..." и clientId: "...".
+       2) Откройте сайт с параметрами: index.html?key=AIzaSy...&client=XXXX.apps.googleusercontent.com
+          (сохранится в localStorage браузера, адресная строка очистится).
+       3) На сайте: вкладка «Настройки» → блок «🔑 Google Sign-In».
+     Приоритет: сохранённые значения (2/3) > ключи из этого файла. */
   const DEFAULTS = {
-    apiKey: "",      // ← или впишите сюда Firebase API key
-    clientId: "",    // ← или сюда OAuth Client ID
+    apiKey: "AIzaXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", // ← ваш Google API key сюда
+    clientId: "",    // ← сюда же можно вписать OAuth Client ID (…apps.googleusercontent.com)
     appId: "",       // ← номер проекта Firebase (необязательно)
   };
 
+  // Перехват ключей из URL (?key=...&client=...&app=...) — сохраняем и чистим адресную строку
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.has("key") || q.has("client")) {
+      const cur = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+      if (q.get("key")) cur.apiKey = q.get("key").trim();
+      if (q.get("client")) cur.clientId = q.get("client").trim();
+      if (q.get("app")) cur.appId = q.get("app").trim();
+      localStorage.setItem(LS_KEY, JSON.stringify(cur));
+      history.replaceState(null, "", location.pathname);
+    }
+  } catch (e) {}
+
   function cfg() {
-    try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || "{}")); }
-    catch (e) { return Object.assign({}, DEFAULTS); }
+    try {
+      const c = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || "{}"));
+      // заглушка-ключ из файла не считается настоящим ключом
+      if (!/^AIza[0-9A-Za-z_\-]{20,}$/.test(c.apiKey || "")) c.apiKey = "";
+      return c;
+    }
+    catch (e) { return Object.assign({}, DEFAULTS, { apiKey: "" }); }
   }
   function saveCfg(o) { localStorage.setItem(LS_KEY, JSON.stringify(Object.assign(cfg(), o))); }
 

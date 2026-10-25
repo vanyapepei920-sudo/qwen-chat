@@ -1,6 +1,6 @@
 .env
-__pycache__/
 results.json
 *.log
-static.log
 __pycache__/
+node_modules/
+.DS_Store

@@ -170,7 +170,7 @@ var DASH = (() => {
     $("#setGrid").addEventListener("change", e => { ui.grid = e.target.checked; store.set("ui.grid", ui.grid); applyUiFlags(); });
     // ключи в настройках
     const gk = $("#setGKey"), gc = $("#setGCx"), gt = $("#setGhToken");
-    if (gk && store.get("gs.key", "")) gk.placeholder = "ключ сохранён ✓";
+    if (gk && (store.get("gs.key", "") || (window.AUTH && AUTH.cfg && AUTH.cfg().apiKey))) gk.placeholder = "ключ сохранён ✓";
     if (gc) gc.value = store.get("gs.cx", "");
     if (gt && localStorage.getItem("gh_pub_token")) gt.placeholder = "GitHub-ключ сохранён ✓";
     const ss = $("#setServerState");

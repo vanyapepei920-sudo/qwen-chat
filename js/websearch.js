@@ -25,7 +25,9 @@ var WEBSEARCH = (() => {
   };
 
   async function searchGoogle(q) {
-    const key = store.get("gs.key", ""), cx = store.get("gs.cx", "");
+    // ключ Google API: сохранённый пользователем → иначе встроенный в auth.js (DEFAULTS.apiKey)
+    const key = store.get("gs.key", "") || (window.AUTH && AUTH.cfg && AUTH.cfg().apiKey) || "";
+    const cx = store.get("gs.cx", "");
     if (!key || !cx) throw new Error("Нужны Google API key и Search Engine ID (cx) — раскройте «🔑 Ключи» выше");
     const d = await jfetch(`https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&num=10`);
     if (d.error) throw new Error(d.error.message || "ошибка Google API");
