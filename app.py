@@ -602,7 +602,9 @@ DEV_ENDPOINTS = ["/info", "/ping?url=", "/status?url=", "/latency?host=&port=&n=
                  "/search?q=", "/subnet?cidr=", "/units?v=&from=&to=", "/ip", "/uptime?url=&interval_sec="]
 # «как у всех» (OpenAI/Stripe-стиль): scope basic даёт ВСЮ базовую диагностику, включая спидтест,
 # чтобы новый ключ без тонкой настройки сразу работал со всеми основными сервисами.
-DEV_SCOPES = {"basic": ["ping", "status", "speed", "dns", "latency", "trace", "subnet", "units", "ip", "info"],
+# speedtest/result — продолжение асинхронного спидтеста, поэтому scope у него тот же, что у start ("speed")
+DEV_ENDPOINT_SCOPE = {"/api/v1/speedtest/result": "speed"}
+DEV_SCOPES = {"basic": ["ping", "status", "speed", "dns", "latency", "trace", "subnet", "units", "ip", "info", "uptime"],
               "net": ["dns", "whois", "trace", "latency"],
               "search": ["search"],
               "all": ["ping", "status", "speed", "dns", "whois", "trace", "latency", "search",
@@ -615,10 +617,10 @@ def _gen_key(env="test"):
     return f"sp-{env}-{h(6)}-{h(6)}-{h(5)}-{h(6)}"
 
 def _key_prefix(raw):
-    """Маска для отображения в списке: sp-test-aj21…fw (реальный ключ не хранится)."""
+    """Маска для отображения в списке: sp-test-aj21…3f4ffw (реальный ключ не хранится)."""
     parts = raw.split("-")
-    if len(parts) >= 6:
-        return f"{parts[0]}-{parts[1]}-{parts[2][:4]}…{parts[-1][-2:]}"
+    if len(parts) >= 5:      # sp-<env>-xxxxxx-xxxxxx-xxxxx-xxxxxx (и короче тоже)
+        return f"{parts[0]}-{parts[1]}-{parts[2][:4]}…{parts[-1]}"
     return raw[:10] + "…"
 
 def _origin_ok(key_row, origin):
@@ -649,6 +651,8 @@ def _dev_auth():
         hdr = request.headers.get("Authorization","")
         if hdr.startswith("Bearer sp-") or hdr.startswith("Bearer npk_"): raw = hdr.split(None,1)[1].strip()
     if not raw: raw = (request.args.get("key") or "").strip()
+    # защита от частой ошибки: ключ вставили в заголовок/параметр с пробелами или кавычками — чистим
+    raw = raw.strip().strip('"').strip("'").strip()
     if not (raw.startswith("sp-") or raw.startswith("npk_")): return None, None
     db = get_db()
     if not _db_ready(db):                    # если хранилище ещё не инициализировано — создаём его на лету
@@ -706,6 +710,10 @@ def dev_required(fn):
                     "rate_limited":"Превышен лимит запросов в минуту (настройка ключа «Лимит»).",
                     "quota_exceeded":"Исчерпана дневная квота ключа (настройка «Дневная квота»).",
                     "missing_key":"Требуется API-ключ. Создайте его: сайт → Настройки → Developer API."}
+            if err in ("invalid_key", None, ""):   # подсказка для самой частой причины 403
+                hint["invalid_key"] = ("Ключ не найден среди активных: он мог быть отозван/выключен, "
+                                       "перевыпущен (старый перестаёт работать) или скопирован с пробелами/кавычками. "
+                                       "Проверьте: Настройки → Developer API → статус ключа; при сомнениях — «Ротация» и новый ключ.")
             resp = jsonify(ok=False, error=err or "missing_key", code=status,
                            message="Forbidden: API key required" if status==403 else "Too Many Requests",
                            type={"rate_limited":"rate_limit_error","quota_exceeded":"rate_limit_error"
@@ -731,6 +739,8 @@ def public_allowed():
 def _dev_scope(name):
     if g.dev is None:            # публичный вызов без ключа — разрешены только public_allowed() эндпоинты
         return None
+    # у отдельных эндпоинтов может быть свой scope (например, speedtest/result наследует "speed" от start)
+    name = DEV_ENDPOINT_SCOPE.get(request.path, name)
     sc = (g.dev["key"]["scopes"] or "basic").split(",")
     allowed = [e for s in sc for e in DEV_SCOPES.get(s, [])]
     if name not in allowed:
@@ -1208,6 +1218,7 @@ ASSISTANT_SYSTEM_PROMPT = (
     "Без ключа работают только публичные эндпоинты: карточка /api/v1, /api/v1/ping, /api/v1/status и /api/v1/ip; "
     "остальные требуют ключ и вернут 403 Forbidden с подсказкой, при превышении лимита — 429 Too Many Requests. "
     "Ключ передаётся заголовком 'X-NetPulse-Key: sp-test-…' (или 'Authorization: Bearer sp-…'). "
+    "Если пользователь получает 403 insufficient_scope или не понимает причину 403 — посоветуй ему в Настройках → Developer API нажать «⚙ Изменить» у ключа и включить scope basic (он покрывает ping/спидтест/dns/trace/subnet/units/ip/info/uptime) или all (все сервисы сразу); изменения применяются мгновенно, пересоздавать ключ не нужно. Если ключ отозван/выключен — кнопки «Включить заново» или «Ротация». "
     "CORS открыт — можно вызывать fetch() прямо со сторонних сайтов.\n"
     "Через API доступны ВСЕ наши сервисы: спидтест (/api/v1/speedtest/start+result или быстрый синхронный /api/v1/speed — серверный замер скорости через "
     "Cloudflare edge, параметры bytes=1..25 МБ, downloads=1..6 потоков, upload=true → download_mbps, "
