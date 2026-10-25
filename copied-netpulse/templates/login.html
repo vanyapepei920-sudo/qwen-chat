@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Вход — NetPulse{% endblock %}
+{% block content %}
+<section class="auth-page">
+  <canvas id="mesh"></canvas>
+  <div class="auth-card glass">
+    <div class="auth-head">
+      <div class="brand-mark big"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M2 12h4l2.5-7 4 14L15 12h7" stroke="#06101c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <h1>С возвращением 👋</h1>
+      <p>Войдите, чтобы продолжить мониторинг сети</p>
+    </div>
+    <div id="rememberBox" class="remember-box" hidden>
+      <div class="rb-av" id="rbAv"></div>
+      <div class="rb-txt"><b id="rbName">—</b><small id="rbMail">—</small></div>
+      <button class="btn sm" id="rbQuick">Продолжить</button>
+    </div>
+    <div id="gbtn"></div>
+    <div id="gAlert"></div>
+    <div class="divider"><span>или</span></div>
+    <button class="btn" id="demoBtn" style="width:100%">Войти в демо‑режим</button>
+    <p class="switch">Нет аккаунта? <a href="{{ url_for('register') }}">Зарегистрироваться</a></p>
+  </div>
+</section>
+{% endblock %}
