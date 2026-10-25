@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}О проекте — NetPulse{% endblock %}
+{% block content %}
+<div class="container"><div class="grid">
+  <section class="card glass col-12 about-hero">
+    <div class="brand-mark big"><svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M2 12h4l2.5-7 4 14L15 12h7" stroke="#06101c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <h1>Net<span>Pulse</span></h1>
+    <p>Сетевой интеллектуальный монитор: скорость, задержки, DNS, трассировка, поиск и качество канала — в реальном времени, с историей на сервере и входом через Google.</p>
+  </section>
+  <section class="card glass col-6"><div class="card-h"><h3>Возможности</h3></div>
+    <ul class="feat about-list">
+      <li><b>Speedtest</b><small>Многопоточный замер ↓/↑, пинг, джиттер, потери.</small></li>
+      <li><b>Live‑мониторинг</b><small>До 5 Гц, адаптивный пакет, график 60 с.</small></li>
+      <li><b>Пинг‑монитор</b><small>Непрерывный RTT к нескольким целевым узлам.</small></li>
+      <li><b>Трассировка</b><small>HTTP‑hop по edge‑узлам CDN.</small></li>
+      <li><b>DNS</b><small>DoH‑сравнение Google/Cloudflare/Quad9.</small></li>
+      <li><b>Wi‑Fi</b><small>Оценка диапазона/канала по RTT и downlink.</small></li>
+      <li><b>Поиск</b><small>Google Custom Search через серверный прокси.</small></li>
+    </ul></section>
+  <section class="card glass col-6"><div class="card-h"><h3>Приватность и стек</h3></div>
+    <div class="kv">
+      <div class="k">Авторизация</div><div class="v">Google Identity Services</div>
+      <div class="k">Проверка токена</div><div class="v">на сервере (app.py)</div>
+      <div class="k">Хранение истории</div><div class="v">SQLite (instance/)</div>
+      <div class="k">Замеры</div><div class="v">Cloudflare Speed</div>
+      <div class="k">Поиск</div><div class="v">Custom Search JSON API</div>
+      <div class="k">Бэкенд</div><div class="v">Flask + Python</div>
+      <div class="k">Данные профиля</div><div class="v">только имя/e‑mail/аватар</div>
+    </div>
+    <p class="muted-note" style="margin-top:14px">Client Secret и ключ поиска хранятся в .env на сервере и никогда не попадают в браузер. Секрет, засвеченный в чате, рекомендуется отозвать в Google Cloud Console → Reset secret.</p>
+  </section>
+</div></div>
+{% endblock %}
