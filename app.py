@@ -800,46 +800,84 @@ def dev_info():
 # GET  /api/v1/speedtest/result?id= → статус queued|running|done|error и метрики
 SPEED_JOBS = {}
 
-def _speed_job(job_id, mb, conns, do_up):
-    """Фоновое выполнение спидтеста для задания job_id."""
-    SPEED_JOBS[job_id]["status"] = "running"
-    payload = b"\0" * (mb * 1_000_000)
-    from concurrent.futures import ThreadPoolExecutor
-    def dl(_i):
+SPEED_DOWN_URLS = ["https://speed.cloudflare.com/__down",
+                   "https://proof.ovh.net/files/{B}.dat",
+                   "http://speedtest.tele2.net/{B}MB.zip"]
+SPEED_UP_URLS   = ["https://speed.cloudflare.com/__up",
+                   "https://httpbin.org/post"]
+
+def _speed_dl_one(mb, idx):
+    """Одна загрузка: пробуем зеркала по очереди; возвращаем Mbps или None."""
+    total_b = mb * 1_000_000
+    for u in SPEED_DOWN_URLS:
+        url = u.replace("{B}", str(total_b)).replace("{MB}", str(mb))
+        sep = "&" if "?" in url else "?"
+        if "{B}" not in u and "{MB}" not in u:
+            url = f"{u}?bytes={total_b}&r={time.time():.6f}{idx}"
         t0 = time.perf_counter()
         try:
-            r = http_lib.get(f"https://speed.cloudflare.com/__down?bytes={mb*1_000_000}&r={time.time():.6f}{_i}",
-                             stream=True, timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
-            got = 0
-            for chunk in r.iter_content(65536):
-                got += len(chunk)
+            r = http_lib.get(url, stream=True, timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
+            if r.status_code != 200:
+                continue
+            got = sum(len(c) for c in r.iter_content(65536))
             dt = time.perf_counter() - t0
-            return round(got * 8 / dt / 1e6, 1) if dt > 0 else 0.0
+            if got > 0 and dt > 0:
+                return round(got * 8 / dt / 1e6, 1)
         except Exception:
-            return None
+            continue
+    return None
+
+def _speed_up_one(total_bytes):
+    """Загрузка наверх через зеркала; возвращает Mbps или None."""
+    step = 250_000
+    for u in SPEED_UP_URLS:
+        t0 = time.perf_counter()
+        try:
+            def gen(n=total_bytes, st=step):
+                sent = 0
+                while sent < n:
+                    k = min(st, n - sent); sent += k
+                    yield b"\0" * k
+            http_lib.post(u, data=gen(), timeout=40, headers={"User-Agent": "NetPulseAPI/1.0"})
+            dt = time.perf_counter() - t0
+            if dt > 0:
+                return round(total_bytes * 8 / dt / 1e6, 1)
+        except Exception:
+            continue
+    return None
+
+def _speed_job(job_id, mb, conns, do_up):
+    """Фоновое выполнение спидтеста для задания job_id.
+    Фикс «всё на нуле»: раньше при недоступности единственного источника
+    (speed.cloudflare.com блокируется сетями хостинга/прокси) все потоки
+    молча возвращали None → метрики были 0. Теперь есть зеркала и честный статус."""
+    SPEED_JOBS[job_id]["status"] = "running"
+    from concurrent.futures import ThreadPoolExecutor
     try:
         with ThreadPoolExecutor(max_workers=conns) as ex:
-            results = [x for x in ex.map(dl, range(conns)) if x is not None]
-        down = round(sum(results)/len(results), 1) if results else 0.0
-        up = None
-        if do_up:
-            try:
-                t0 = time.perf_counter()
-                http_lib.post("https://speed.cloudflare.com/__up", data=payload[:2_000_000],
-                              timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
-                dt = time.perf_counter() - t0
-                up = round(2_000_000 * 8 / dt / 1e6, 1) if dt > 0 else 0.0
-            except Exception:
-                up = None
+            results = [x for x in ex.map(lambda i: _speed_dl_one(mb, i), range(conns))]
+        ok_results = [x for x in results if x is not None]
+        down = round(sum(ok_results)/len(ok_results), 1) if ok_results else 0.0
+        up = _speed_up_one(min(mb, 5) * 1_000_000) if do_up else None
         ping = None
-        try:
+        for pu in SPEED_DOWN_URLS:
             t0 = time.perf_counter()
-            http_lib.head("https://speed.cloudflare.com/meta", timeout=10)
-            ping = round((time.perf_counter()-t0)*1000, 1)
-        except Exception:
-            pass
-        SPEED_JOBS[job_id].update(status="done", download_mbps=down, upload_mbps=up, ping_ms=ping,
-                                  finished_at=datetime.now().isoformat(timespec="seconds"))
+            try:
+                probe = pu.replace("{B}", "1000").replace("{MB}", "1")
+                if "{B}" not in pu and "{MB}" not in pu:
+                    probe = pu.rstrip("/") + "/meta" if "cloudflare" in pu else pu
+                http_lib.head(probe, timeout=8)
+                ping = round((time.perf_counter()-t0)*1000, 1)
+                break
+            except Exception:
+                continue
+        status = "done" if (ok_results or up is not None or ping is not None) else "error"
+        SPEED_JOBS[job_id].update(
+            status=status, download_mbps=down, upload_mbps=up, ping_ms=ping,
+            streams_ok=len(ok_results), streams_total=conns,
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            **({} if status == "done" else {"error": "measurement_sources_unreachable",
+              "hint": "Источники измерения недоступны из сети сервера — повторите позже"}))
     except Exception as e:
         SPEED_JOBS[job_id].update(status="error", error=str(e)[:200])
 
@@ -894,7 +932,7 @@ def dev_ping():
         return jsonify(ok=True, target=host, ip=ip, reachable=True,
                        latency_ms=round((time.perf_counter()-t0)*1000,1))
     except Exception as e:
-        return jsonify(ok=True, target=url or host, reachable=False, error=str(e)[:200])
+        return jsonify(ok=True, target=url or host, reachable=False, latency_ms=None, error=str(e)[:200])
 
 @app.route("/api/v1/status")
 @dev_required
@@ -1105,13 +1143,37 @@ def dev_units_api():
 @app.route("/api/v1/ip")
 @dev_required
 def dev_ip():
-    fwd = request.headers.get("X-Forwarded-For","")
-    client = (fwd.split(",")[0].strip() if fwd else request.remote_addr) or ""
-    geo=None
-    if request.args.get("geo")=="1" and client:
-        try: geo = http_lib.get(f"http://ip-api.com/json/{client}?fields=status,country,regionName,city,isp", timeout=6).json()
-        except Exception: pass
-    return jsonify(ok=True, ip=client, user_agent=request.headers.get("User-Agent","")[:200], geo=geo)
+    """IP и гео КЛИЕНТА, вызвавшего API (как у ipify/ipinfo).
+    Фикс «всё на нуле»: раньше показывался адрес самого сервера, а geo
+    молча оставался null при недоступности единственного источника."""
+    fwd = request.headers.get("X-Forwarded-For", "")
+    client = (fwd.split(",")[0].strip() if fwd else "") or request.headers.get("X-Real-IP", "") or request.remote_addr or ""
+    g = _geo_lookup(client)
+    if not g:                                   # приватный/локальный IP — спросим внешний сервис
+        g = _geo_lookup("")
+    return jsonify(ok=True, ip=g.get("ip") or client, geo=g or None,
+                   user_agent=request.headers.get("User-Agent", "")[:200])
+
+def _geo_lookup(ip):
+    """Гео по IP с зеркалами; всегда возвращает dict (может быть пустым)."""
+    srcs = []
+    if ip and not ip.startswith("127.") and ip != "localhost":
+        srcs.append(f"http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,query")
+        srcs.append(f"https://ipapi.co/{ip}/json/")
+    srcs.append("https://ipinfo.io/json")          # что видит мир (через прокси — публичный IP)
+    srcs.append("https://api.ipify.org?format=json")
+    for u in srcs:
+        try:
+            j = http_lib.get(u, timeout=6).json()
+            if isinstance(j, dict) and (j.get("ip") or j.get("query")):
+                return {"source": u.split("/")[2],
+                        "ip": j.get("ip") or j.get("query"),
+                        "country": j.get("country") or j.get("country_name"),
+                        "region": j.get("regionName") or j.get("region"),
+                        "city": j.get("city"), "isp": j.get("org") or j.get("isp")}
+        except Exception:
+            continue
+    return {}
 
 @app.route("/api/v1/uptime", methods=["GET"])
 @dev_required
@@ -1125,8 +1187,11 @@ def dev_uptime_get():
         st = db.execute("SELECT COUNT(*) c, SUM(ok) up FROM monitor_results WHERE monitor_id=? AND ts>?",
                         (mo["id"], int(time.time()*1000)-86400000)).fetchone()
         last = db.execute("SELECT ok,status,latency_ms,ts FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 1",(mo["id"],)).fetchone()
-        out.append({**dict(mo), "uptime_24h": round(100*st["up"]/st["c"],2) if st["c"] else None,
-                    "checks_24h": st["c"], "last": dict(last) if last else None})
+        hist = db.execute("SELECT ts,ok,status,latency_ms FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 20",
+                          (mo["id"],)).fetchall()
+        out.append({**dict(mo), "uptime_24h": round(100*(st["up"] or 0)/st["c"],2) if st["c"] else None,
+                    "checks_24h": st["c"], "last": dict(last) if last else None,
+                    "history": [dict(h) for h in reversed(hist)]})
     return jsonify(ok=True, monitors=out)
 
 @app.route("/api/v1/uptime", methods=["POST"])
