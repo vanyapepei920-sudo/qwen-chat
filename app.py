@@ -112,7 +112,13 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
         name TEXT, key_hash TEXT UNIQUE NOT NULL, secret TEXT DEFAULT '',
         scopes TEXT DEFAULT 'basic', active INTEGER DEFAULT 1,
-        rate_limit INTEGER DEFAULT 60, created_at TEXT, last_used TEXT, calls INTEGER DEFAULT 0);
+        rate_limit INTEGER DEFAULT 60, created_at TEXT, last_used TEXT, calls INTEGER DEFAULT 0,
+        env TEXT DEFAULT 'test', allowed_origins TEXT DEFAULT '*', quota_day INTEGER DEFAULT 0,
+        revoked INTEGER DEFAULT 0, note TEXT DEFAULT '', expires_at TEXT DEFAULT '',
+        key_mask TEXT DEFAULT '');
+    CREATE TABLE IF NOT EXISTS chat_messages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+        ts INTEGER NOT NULL, role TEXT, text TEXT);
     CREATE TABLE IF NOT EXISTS key_usage(
         id INTEGER PRIMARY KEY AUTOINCREMENT, key_id INTEGER NOT NULL, ts INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_tests_user ON tests(user_id, ts DESC);
@@ -122,7 +128,14 @@ def init_db():
     """)
     # миграция: добавляем недостающие колонки (если таблица создана старой версией)
     for tbl, col, decl in [("dev_keys","secret","TEXT DEFAULT ''"),
-                           ("dev_keys","calls","INTEGER DEFAULT 0")]:
+                           ("dev_keys","calls","INTEGER DEFAULT 0"),
+                           ("dev_keys","env","TEXT DEFAULT 'test'"),
+                           ("dev_keys","allowed_origins","TEXT DEFAULT '*'"),
+                           ("dev_keys","quota_day","INTEGER DEFAULT 0"),
+                           ("dev_keys","revoked","INTEGER DEFAULT 0"),
+                           ("dev_keys","note","TEXT DEFAULT ''"),
+                           ("dev_keys","expires_at","TEXT DEFAULT ''"),
+                           ("dev_keys","key_mask","TEXT DEFAULT ''")]:
         cols = [r[1] for r in db.execute(f"PRAGMA table_info({tbl})").fetchall()]
         if col not in cols:
             db.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
@@ -197,9 +210,9 @@ def register():
     if session.get("user"): return redirect(url_for("dashboard"))
     return render_template("register.html", google_client_id=genv("GOOGLE_CLIENT_ID"), page="register")
 
-PAGES = {"dashboard":"Дашборд","ping":"Пинг","traceroute":"Трассировка","dns":"DNS",
+PAGES = {"dashboard":"Спидтест","ping":"Пинг","traceroute":"Трассировка","dns":"DNS",
          "wifi":"Wi‑Fi","search":"Поиск","history":"История","monitor":"Мониторинг",
-         "settings":"Настройки"}
+         "assistant":"Ассистент","settings":"Настройки"}
 for _name in PAGES:
     def _mk(nm):
         @login_required_html
@@ -326,6 +339,7 @@ def health():
     return jsonify(ok=True, service="netpulse", google_auth=HAVE_GOOGLE_AUTH,
                    search=bool(genv("GOOGLE_SEARCH_API_KEY") and genv("GOOGLE_SEARCH_CX")),
                    google_login=bool(genv("GOOGLE_CLIENT_ID")),
+                   gemini=bool(genv("GEMINI_API_KEY")),
                    time=datetime.now().isoformat(timespec="seconds"))
 
 # ============ НОВЫЕ ФУНКЦИИ ============
@@ -577,23 +591,51 @@ def tokens_revoke(tid):
 #         {headers:{'X-NetPulse-Key':'npk_...'}})
 DEV_SCOPES = {"basic": ["ping","status"], "net": ["dns","whois"], "search": ["search"]}
 
+def _gen_key(env="test"):
+    """sp-<env>-aj21ak-14ddad-3144d-3f4ffw — человекочитаемый ключ с префиксом окружения."""
+    import secrets as _s
+    h = lambda n: _s.token_hex((n+1)//2)[:n]
+    return f"sp-{env}-{h(6)}-{h(6)}-{h(5)}-{h(6)}"
+
+def _key_prefix(raw):
+    """Маска для отображения в списке: sp-test-aj21…fw (реальный ключ не хранится)."""
+    parts = raw.split("-")
+    if len(parts) >= 6:
+        return f"{parts[0]}-{parts[1]}-{parts[2][:4]}…{parts[-1][-2:]}"
+    return raw[:10] + "…"
+
+def _origin_ok(key_row, origin):
+    ao = (key_row["allowed_origins"] or "*").strip()
+    if ao in ("*", ""): return True
+    allow = {o.strip().lower() for o in ao.split(",") if o.strip()}
+    return origin.strip().lower() in allow
+
 def _dev_auth():
-    """Ищет dev-ключ в заголовке X-NetPulse-Key / Authorization Bearer npk_ / ?key="""
+    """Ищет dev-ключ в заголовке X-NetPulse-Key / Authorization Bearer sp-… / ?key= (старый npk_ тоже принимается)"""
     raw = (request.headers.get("X-NetPulse-Key") or "").strip()
     if not raw:
         hdr = request.headers.get("Authorization","")
-        if hdr.startswith("Bearer npk_"): raw = hdr.split(None,1)[1].strip()
+        if hdr.startswith("Bearer sp-") or hdr.startswith("Bearer npk_"): raw = hdr.split(None,1)[1].strip()
     if not raw: raw = (request.args.get("key") or "").strip()
-    if not raw or not raw.startswith("npk_"): return None, None
+    if not (raw.startswith("sp-") or raw.startswith("npk_")): return None, None
     h = hashlib.sha256(raw.encode()).hexdigest()
     db = get_db()
     k = db.execute("SELECT * FROM dev_keys WHERE key_hash=?", (h,)).fetchone()
-    if not k or not k["active"]: return None, "invalid_key"
+    if not k or not k["active"] or k["revoked"]: return None, "invalid_key"
+    if (k["expires_at"] or "") and k["expires_at"] < datetime.now().isoformat(timespec="seconds"):
+        return None, "expired_key"
+    origin = request.headers.get("Origin","").strip()   # CORS allow-list по Origin (если задан)
+    if origin and not _origin_ok(k, origin): return None, "origin_denied"
     now_ms = int(time.time()*1000)
     # rate limit: скользящее окно 60 сек
     cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
                      (k["id"], now_ms-60000)).fetchone()["c"]
     if cnt >= k["rate_limit"]: return None, "rate_limited"
+    qd = k["quota_day"] or 0                              # дневная квота (quota_day>0)
+    if qd:
+        day_cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
+                             (k["id"], now_ms - now_ms%86400000)).fetchone()["c"]
+        if day_cnt >= qd: return None, "quota_exceeded"
     db.execute("INSERT INTO key_usage(key_id,ts) VALUES(?,?)", (k["id"], now_ms))
     db.execute("UPDATE dev_keys SET last_used=?, calls=calls+1 WHERE id=?",
                (datetime.now().isoformat(timespec="seconds"), k["id"]))
@@ -606,8 +648,11 @@ def dev_required(fn):
     def w(*a, **k):
         auth, err = _dev_auth()
         if not auth:
-            hint = {"invalid_key":"Ключ не найден или отозван. Создайте новый в Настройках → Developer API.",
-                    "rate_limited":"Превышен лимит запросов (см. Rate limit ключа)."}
+            hint = {"invalid_key":"Ключ не найден, выключен или отозван. Проверьте статус в Настройках → Developer API.",
+                    "rate_limited":"Превышен лимит запросов в минуту (настройка ключа «Лимит»).",
+                    "quota_exceeded":"Исчерпана дневная квота ключа (настройка «Дневная квота»).",
+                    "expired_key":"Срок действия ключа истёк — создайте новый или продлите в настройках ключа.",
+                    "origin_denied":"Запрос с этого Origin запрещён настройкой «Разрешённые домены» ключа."}
             return jsonify(ok=False, error=err or "missing_key",
                            hint=hint.get(err, "Передайте ключ: заголовок 'X-NetPulse-Key: npk_…' или ?key=npk_…")), \
                    429 if err=="rate_limited" else 401
@@ -627,8 +672,10 @@ def _dev_scope(name):
 @dev_required
 def dev_info():
     k = g.dev["key"]
-    return jsonify(ok=True, key_name=k["name"], scopes=k["scopes"].split(","),
-                   rate_limit_per_min=k["rate_limit"], total_calls=k["calls"],
+    return jsonify(ok=True, key_name=k["name"], env=k["env"], scopes=k["scopes"].split(","),
+                   rate_limit_per_min=k["rate_limit"], quota_day=k["quota_day"],
+                   allowed_origins=(k["allowed_origins"] or "*").split(","),
+                   expires_at=k["expires_at"] or None, total_calls=k["calls"],
                    owner=g.dev["user"].get("name"), api_version="v1",
                    endpoints=["/api/v1/info","/api/v1/ping?url=","/api/v1/status?url=",
                               "/api/v1/dns?host=","/api/v1/whois?domain=","/api/v1/search?q=",
@@ -804,14 +851,96 @@ def dev_uptime_add():
     db.execute("UPDATE monitors SET last_check=? WHERE id=?",(now,mid)); db.commit()
     return jsonify(ok=True, id=mid, result=res)
 
+
+# ============ GEMINI — БОТ-ПОМОЩНИК ПО САЙТУ ============
+# Ключ Gemini берётся ТОЛЬКО из .env: GEMINI_API_KEY (+опц. GEMINI_MODEL)
+GEMINI_SYSTEM_PROMPT = (
+    "Ты — Палс, встроенный помощник сайта NetPulse (сервис проверки скорости интернета, "
+    "пинга, трассировки, DNS, Wi-Fi аналитики, поиска Google, истории измерений, "
+    "мониторинга доступности сайтов uptime и Developer API).\n"
+    "Разделы сайта: Спидтест (главная, кнопка «Старт», live-график), Пинг, Трассировка, DNS, "
+    "Wi-Fi (анализ каналов 2.4/5/6 ГГц), Поиск (web/images), История (экспорт JSON/CSV), "
+    "Мониторинг (URL-проверки каждые N секунд, аптайм за 24ч, уведомления при падении), "
+    "Настройки (профиль, Developer API ключи вида sp-test-… или sp-live-…, scopes basic/net/search, "
+    "лимит запросов в минуту, дневная квота, разрешённые Origin, срок действия, отзыв/ротация ключей), "
+    "О проекте. Вход — только через Google.\n"
+    "Developer API: GET /api/v1/info|ping|status|dns|whois|search|subnet|units|ip|uptime, "
+    "ключ передаётся заголовком X-NetPulse-Key или Authorization: Bearer, CORS открыт для сторонних сайтов.\n"
+    "Отвечай кратко (до ~120 слов) по-русски, дружелюбно, шаг за шагом. Если вопрос не про NetPulse, "
+    "сеть или компьютеры — вежливо откажи и верни тему. Не выдумывай функции, которых нет."
+)
+
+def gemini_available():
+    return bool(genv("GEMINI_API_KEY"))
+
+def _gemini_call(history, user_text):
+    key = genv("GEMINI_API_KEY")
+    model = genv("GEMINI_MODEL", "gemini-2.0-flash")
+    contents = []
+    for m in history[-10:]:
+        role = "model" if m["role"] == "assistant" else "user"
+        contents.append({"role": role, "parts": [{"text": m["text"]}]})
+    contents.append({"role": "user", "parts": [{"text": user_text}]})
+    r = http_lib.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+        json={"systemInstruction": {"parts": [{"text": GEMINI_SYSTEM_PROMPT}]},
+              "contents": contents,
+              "generationConfig": {"temperature": 0.5, "maxOutputTokens": 700}},
+        timeout=30)
+    data = r.json()
+    if r.status_code != 200 or "candidates" not in data:
+        err = data.get("error", {}).get("message", f"HTTP {r.status_code}")
+        log.warning("gemini: %s", err)
+        raise RuntimeError(err[:200])
+    parts = data["candidates"][0].get("content", {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts).strip() or "…"
+
+@app.route("/api/chat", methods=["POST"])
+@login_required
+def chat_send():
+    d = request.get_json(silent=True) or {}
+    text = (d.get("text") or "").strip()[:900]
+    if not text: return jsonify(ok=False, error="empty"), 400
+    db = get_db(); uid = session["user"]["db_id"]; now = int(time.time()*1000)
+    db.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)", (uid, now, "user", text))
+    db.commit()
+    if not gemini_available():
+        reply = ("🤖 Gemini не подключён. Добавьте GEMINI_API_KEY в файл .env и перезапустите сервер — "
+                 "я отвечу сразу после этого.")
+        status = 503
+    else:
+        try:
+            history = [dict(r) for r in db.execute(
+                "SELECT role,text FROM chat_messages WHERE user_id=? ORDER BY ts DESC LIMIT 11",
+                (uid,)).fetchall()][::-1][:-1]
+            reply = _gemini_call(history, text); status = 200
+        except Exception as e:
+            reply = f"⚠ Ошибка Gemini: {e}"; status = 502
+    db.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)", (uid, int(time.time()*1000), "assistant", reply))
+    db.commit()
+    return jsonify(ok=status==200, reply=reply), status
+
+@app.route("/api/chat", methods=["GET"])
+@login_required
+def chat_get():
+    rows = get_db().execute("SELECT ts,role,text FROM chat_messages WHERE user_id=? ORDER BY ts ASC LIMIT 200",
+                            (session["user"]["db_id"],)).fetchall()
+    return jsonify(ok=True, messages=[dict(r) for r in rows], assistant_ready=gemini_available())
+
+@app.route("/api/chat", methods=["DELETE"])
+@login_required
+def chat_clear():
+    get_db().execute("DELETE FROM chat_messages WHERE user_id=?", (session["user"]["db_id"],))
+    get_db().commit(); return jsonify(ok=True)
+
 # --- управление dev-ключами (нужен вход через Google, cookies) ---
 @app.route("/api/devkeys", methods=["GET"])
 @login_required
 def devkeys_list():
     rows = get_db().execute(
-        "SELECT id,name,key_prefix,scopes,active,rate_limit,created_at,last_used,calls FROM ("
-        "SELECT id,'npk_'||substr(hex(key_hash),1,4)||'…'||substr(hex(key_hash),-4) key_prefix,"
-        "scopes,active,rate_limit,created_at,last_used,calls FROM dev_keys WHERE user_id=?) ORDER BY id DESC",
+        "SELECT id,name,key_prefix,scopes,active,rate_limit,created_at,last_used,calls,"
+        "env,allowed_origins,quota_day,revoked,note,expires_at FROM ("
+        "SELECT *, COALESCE(NULLIF(key_mask,''),'sp-***') key_prefix FROM dev_keys WHERE user_id=?) ORDER BY id DESC",
         (session["user"]["db_id"],)).fetchall()
     return jsonify(ok=True, keys=[dict(r) for r in rows])
 
@@ -820,17 +949,98 @@ def devkeys_list():
 def devkeys_create():
     d = request.get_json(silent=True) or {}
     name = (d.get("name") or "api key")[:60]
+    env  = d.get("env") if d.get("env") in ("test","live") else "test"
     scopes = d.get("scopes") or ["basic"]
     if isinstance(scopes, str): scopes = [x for x in scopes.split(",") if x]
     scopes = [s for s in scopes if s in DEV_SCOPES] or ["basic"]
     rl = max(5, min(600, int(d.get("rate_limit", 60) or 60)))
-    raw = "npk_" + secrets.token_urlsafe(30)
-    secret = secrets.token_hex(16)
+    quota_day = max(0, min(1_000_000, int(d.get("quota_day", 0) or 0)))
+    origins = d.get("allowed_origins") or "*"
+    if isinstance(origins, list): origins = ",".join(origins)
+    origins = origins.strip() or "*"
+    expires_days = int(d.get("expires_days", 0) or 0)
+    expires_at = (datetime.now() + timedelta(days=expires_days)).isoformat(timespec="seconds") if expires_days > 0 else ""
+    note = (d.get("note") or "")[:140]
+    raw = _gen_key(env); secret = secrets.token_hex(16)
     h = hashlib.sha256(raw.encode()).hexdigest()
-    get_db().execute("INSERT INTO dev_keys(user_id,name,key_hash,secret,scopes,rate_limit,created_at) VALUES(?,?,?,?,?,?,?)",
-        (session["user"]["db_id"], name, h, secret, ",".join(scopes), rl, datetime.now().isoformat(timespec="seconds")))
+    get_db().execute(
+        "INSERT INTO dev_keys(user_id,name,key_hash,key_mask,secret,scopes,rate_limit,env,"
+        "allowed_origins,quota_day,expires_at,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (session["user"]["db_id"], name, h, _key_prefix(raw), secret, ",".join(scopes), rl, env,
+         origins, quota_day, expires_at, note, datetime.now().isoformat(timespec="seconds")))
     get_db().commit()
-    return jsonify(ok=True, key=raw, secret=secret, note="Показаны один раз — сохраните сейчас")
+    return jsonify(ok=True, key=raw, secret=secret, env=env,
+                   note="Ключ показан ОДИН раз — сохраните его сейчас")
+
+@app.route("/api/devkeys/<int:kid>", methods=["PATCH"])
+@login_required
+def devkeys_update(kid):
+    d = request.get_json(silent=True) or {}
+    db = get_db(); k = db.execute("SELECT * FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
+    if not k: return jsonify(ok=False, error="not_found"), 404
+    sets, args = [], []
+    if "name"   in d: sets.append("name=?");        args.append((d["name"] or k["name"])[:60])
+    if "note"   in d: sets.append("note=?");        args.append((d["note"] or "")[:140])
+    if "rate_limit" in d: sets.append("rate_limit=?"); args.append(max(5, min(600, int(d["rate_limit"] or 60))))
+    if "quota_day"  in d: sets.append("quota_day=?");  args.append(max(0, min(1_000_000, int(d["quota_day"] or 0))))
+    if "active"     in d: sets.append("active=?");     args.append(1 if d["active"] else 0)
+    if "env" in d and d["env"] in ("test","live"):
+        # окружение зашито в префикс ключа — смена env требует перевыпуска
+        return jsonify(ok=False, error="env_immutable",
+                       hint="Окружение (test/live) задаётся при создании. Для смены — создайте новый ключ."), 400
+    if "allowed_origins" in d:
+        o = d["allowed_origins"]
+        if isinstance(o, list): o = ",".join(o)
+        sets.append("allowed_origins=?"); args.append((o or "*").strip() or "*")
+    if "scopes" in d:
+        sc = d["scopes"]
+        if isinstance(sc, str): sc = [x for x in sc.split(",") if x]
+        sc = [s for s in sc if s in DEV_SCOPES] or ["basic"]
+        sets.append("scopes=?"); args.append(",".join(sc))
+    if "expires_days" in d:
+        ed = int(d["expires_days"] or 0)
+        val = (datetime.now() + timedelta(days=ed)).isoformat(timespec="seconds") if ed > 0 else ""
+        sets.append("expires_at=?"); args.append(val)
+    if sets:
+        args.append(kid); db.execute(f"UPDATE dev_keys SET {','.join(sets)} WHERE id=?", args); db.commit()
+    return jsonify(ok=True)
+
+@app.route("/api/devkeys/<int:kid>/revoke", methods=["POST"])
+@login_required
+def devkeys_revoke(kid):
+    db = get_db(); k = db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
+    if not k: return jsonify(ok=False, error="not_found"), 404
+    db.execute("UPDATE dev_keys SET revoked=1, active=0 WHERE id=?", (kid,)); db.commit()
+    return jsonify(ok=True, revoked=True)
+
+@app.route("/api/devkeys/<int:kid>/unrevoke", methods=["POST"])
+@login_required
+def devkeys_unrevoke(kid):
+    db = get_db(); k = db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
+    if not k: return jsonify(ok=False, error="not_found"), 404
+    db.execute("UPDATE dev_keys SET revoked=0, active=1 WHERE id=?", (kid,)); db.commit()
+    return jsonify(ok=True, revoked=False)
+
+@app.route("/api/devkeys/<int:kid>/rotate", methods=["POST"])
+@login_required
+def devkeys_rotate(kid):
+    """Перевыпуск ключа: новый sp-… со старыми настройками."""
+    db = get_db(); k = db.execute("SELECT * FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
+    if not k: return jsonify(ok=False, error="not_found"), 404
+    raw = _gen_key(k["env"]); h = hashlib.sha256(raw.encode()).hexdigest()
+    db.execute("UPDATE dev_keys SET key_hash=?, key_mask=?, revoked=0, active=1 WHERE id=?",
+               (h, _key_prefix(raw), kid)); db.commit()
+    return jsonify(ok=True, key=raw, note="Старый ключ перестал работать. Новый показан один раз.")
+
+@app.route("/api/devkeys/<int:kid>/usage")
+@login_required
+def devkeys_usage(kid):
+    db = get_db(); k = db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
+    if not k: return jsonify(ok=False, error="not_found"), 404
+    now_ms = int(time.time()*1000)
+    day = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?", (kid, now_ms - now_ms%86400000)).fetchone()["c"]
+    hour = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?", (kid, now_ms-3600000)).fetchone()["c"]
+    return jsonify(ok=True, today=day, last_hour=hour, total=k["calls"] if hasattr(k,"calls") else 0)
 
 @app.route("/api/devkeys/<int:kid>/toggle", methods=["POST"])
 @login_required

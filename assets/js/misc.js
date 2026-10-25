@@ -41,39 +41,78 @@
     $('#setWipeServer').onclick=async()=>{if(!confirm('Удалить историю с сервера?'))return;await K.History.clear();K.toast('Серверная история удалена','ok',2200);};
     fetch('/api/health').then(r=>r.json()).then(j=>{$('#setHealth').innerHTML='ok · google-auth:'+(j.google_auth?'yes':'fallback')+' · search:'+(j.search?'yes':'no');}).catch(()=>$('#setHealth').textContent='недоступен');
 
-    /* --- Developer API ключи (npk_) --- */
+    /* --- Developer API ключи (sp-test-… / sp-live-…) --- */
     const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    let KEYS=[];
+    function statusBadge(k){
+      if(k.revoked) return ' <span class="badge bad">отозван</span>';
+      if(!k.active) return ' <span class="badge mid">выключен</span>';
+      if(k.expires_at && new Date(k.expires_at) < new Date()) return ' <span class="badge bad">истёк</span>';
+      return ' <span class="badge good">активен</span>';
+    }
     async function loadKeys(){const j=await fetch('/api/devkeys',{credentials:'include'}).then(r=>r.json());
-      if(!j.ok)return;
-      $('#dkBody').innerHTML=j.keys.length?j.keys.map(k=>'<tr><td>'+esc(k.name)+'</td>'+
-        '<td style="font-family:var(--mono);font-size:12px">'+esc(k.key_prefix||'')+'</td>'+
-        '<td>'+(k.scopes||'basic').split(',').map(s=>'<span class="badge mid">'+esc(s)+'</span>').join(' ')+'</td>'+
-        '<td>'+k.rate_limit+'/мин</td><td>'+(k.calls||0)+'</td><td>'+esc(k.last_used||'никогда')+'</td>'+
+      if(!j.ok)return; KEYS=j.keys;
+      $('#dkBody').innerHTML=j.keys.length?j.keys.map(k=>'<tr><td>'+esc(k.name)+statusBadge(k)+
+        (k.note?'<br><small style="color:var(--muted-2)">'+esc(k.note)+'</small>':'')+'</td>'+
+        '<td style="font-family:var(--mono);font-size:12px">'+esc(k.key_prefix||'')+
+        '<br><span class="badge '+(k.env==='live'?'good':'mid')+'">'+esc(k.env||'test')+'</span></td>'+
+        '<td>'+(k.scopes||'basic').split(',').map(s=>'<span class="badge mid">'+esc(s)+'</span>').join(' ')+
+        ((k.allowed_origins&&k.allowed_origins!=='*')?'<br><small style="color:var(--muted-2)">'+esc(k.allowed_origins)+'</small>':'')+'</td>'+
+        '<td>'+k.rate_limit+'/мин'+(k.quota_day?'<br><small style="color:var(--muted-2)">'+k.quota_day+'/сут</small>':'')+'</td>'+
+        '<td>'+(k.calls||0)+'</td><td>'+esc(k.last_used||'никогда')+'</td>'+
         '<td style="text-align:right;white-space:nowrap">'+
-        '<button class="btn sm ghost" data-tog="'+k.id+'" data-on="'+(k.active?1:0)+'">'+(k.active?'⏸ Выкл':'▶ Вкл')+'</button> '+
+        '<button class="btn sm ghost" data-edit="'+k.id+'">⚙ Изменить</button> '+
+        '<button class="btn sm ghost" data-tog="'+k.id+'" data-on="'+(k.active?1:0)+'"'+(k.revoked?' disabled':'')+'>'+(k.active?'⏸ Выкл':'▶ Вкл')+'</button> '+
+        (k.revoked
+          ?'<button class="btn sm ghost" data-unrev="'+k.id+'">↩ Вернуть</button> '
+          :'<button class="btn sm ghost warn" data-rev="'+k.id+'">🚫 Отозвать</button> ')+
+        '<button class="btn sm ghost" data-rot="'+k.id+'">🔄 Ротация</button> '+
         '<button class="btn sm ghost danger" data-del="'+k.id+'">✕</button></td></tr>').join('')
         :'<tr><td colspan="7" class="empty">Ключей пока нет — создайте первый</td></tr>';
     }
+    function showNewKey(raw,label){const box=$('#dkNew');box.hidden=false;
+      box.innerHTML='<div class="kv"><div class="k">'+label+' <b>(показан один раз!)</b></div>'+        '<div class="v" style="font-family:var(--mono);word-break:break-all">'+esc(raw)+        ' <button class="btn sm" id="dkCopyNew">Копировать</button></div></div>';      $('#dkCopyNew').onclick=()=>{navigator.clipboard.writeText(raw);K.toast('Скопировано','ok',1500);};}
     $('#dkForm').onsubmit=async e=>{e.preventDefault();
-      const scopes=[...document.querySelectorAll('#dkForm input.chk:checked')].map(i=>i.value);
+      const scopes=[...document.querySelectorAll('#dkForm input.chk[value]:checked')].map(i=>i.value);
+      const body={name:$('#dkName').value||'api key',env:$('#dkEnv').value,scopes,
+        rate_limit:Number($('#dkRate').value),quota_day:Number($('#dkQuota').value||0),
+        allowed_origins:$('#dkOrigins').value.trim()||'*',expires_days:Number($('#dkExpires').value),
+        note:$('#dkNote').value.trim()};
       const j=await fetch('/api/devkeys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({name:$('#dkName').value||'api key',scopes,rate_limit:Number($('#dkRate').value)})}).then(r=>r.json());
-      if(j.ok){const box=$('#dkNew');box.hidden=false;
-        box.innerHTML='<div class="kv"><div class="k">Новый ключ <b>(показан один раз!)</b></div>'+
-          '<div class="v" style="font-family:var(--mono);word-break:break-all">'+esc(j.key)+
-          ' <button class="btn sm" id="dkCopyKey">Копировать</button></div>'+
-          '<div class="k">Webhook secret (для подписи callback-ов)</div>'+
-          '<div class="v" style="font-family:var(--mono);word-break:break-all">'+esc(j.secret)+
-          ' <button class="btn sm" id="dkCopySec">Копировать</button></div></div>';
-        $('#dkCopyKey').onclick=()=>{navigator.clipboard.writeText(j.key);K.toast('Ключ скопирован','ok',1500);};
-        $('#dkCopySec').onclick=()=>{navigator.clipboard.writeText(j.secret);K.toast('Secret скопирован','ok',1500);};
-        $('#dkName').value='';loadKeys();}
+        body:JSON.stringify(body)}).then(r=>r.json());
+      if(j.ok){showNewKey(j.key,'Новый ключ');
+        const sb=$('#dkNew .kv');if(sb&&j.secret){const d=document.createElement('div');d.className='k';d.textContent='Webhook secret';
+        const v=document.createElement('div');v.className='v';v.style.fontFamily='var(--mono)';v.textContent=j.secret;sb.append(d,v);}
+        $('#dkName').value='';$('#dkQuota').value='';$('#dkOrigins').value='';$('#dkNote').value='';loadKeys();}
     };
+    /* --- панель редактирования ключа --- */
+    function editPanel(k){
+      return '<div class="dk-edit"><b style="font-size:13px">⚙ Настройки ключа «'+esc(k.name)+'» <span class="badge '+(k.env==='live'?'good':'mid')+'">'+esc(k.env)+'</span></b>'+      '<div class="dk-grid">'+      '<label>Название<input class="inp" id="edName" value="'+esc(k.name)+'"></label>'+      '<label>Лимит зап./мин<select class="sel" id="edRate">'+[30,60,120,300,600].map(v=>'<option value="'+v+'"'+(v==k.rate_limit?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'+      '<label>Дневная квота (0=∞)<input class="inp" id="edQuota" type="number" min="0" value="'+(k.quota_day||0)+'"></label>'+      '<label>Scopes<span style="display:flex;gap:8px;flex-wrap:wrap">'+['basic','net','search'].map(s=>'<label style="display:flex;gap:4px;align-items:center;font-size:12px"><input type="checkbox" class="chk edScope" value="'+s+'"'+((k.scopes||'').split(',').includes(s)?' checked':'')+'>'+s+'</label>').join('')+'</span></label>'+      '<label>Разрешённые домены (через запятую)<input class="inp" id="edOrigins" value="'+esc(k.allowed_origins||'*')+'"></label>'+      '<label>Срок действия<select class="sel" id="edExp"><option value="0">Бессрочно</option><option value="7">+7 дней</option><option value="30">+30 дней</option><option value="90">+90 дней</option><option value="365">+1 год</option></select></label>'+      '<label>Заметка<input class="inp" id="edNote" value="'+esc(k.note||'')+'"></label>'+      '<label>Статус<select class="sel" id="edActive"><option value="1"'+(k.active&&!k.revoked?' selected':'')+'>Активен</option><option value="0"'+(!k.active?' selected':'')+'>Выключен</option></select></label>'+      '</div><div style="display:flex;gap:8px;margin-top:4px"><button class="btn sm primary" id="edSave" data-id="'+k.id+'">💾 Сохранить</button>'+      '<button class="btn sm ghost" id="edClose">Отмена</button></div></div>';
+    }
     $('#dkBody').onclick=async e=>{
-      const t=e.target.closest('[data-tog]'), d=e.target.closest('[data-del]');
-      if(t){await fetch('/api/devkeys/'+t.dataset.tog+'/toggle',{method:'POST',credentials:'include'});loadKeys();}
-      if(d){if(!confirm('Удалить ключ навсегда?'))return;
-        await fetch('/api/devkeys/'+d.dataset.del,{method:'DELETE',credentials:'include'});loadKeys();}
+      const b=e.target.closest('button'); if(!b)return;
+      const id=b.dataset.edit||b.dataset.tog||b.dataset.del||b.dataset.rev||b.dataset.unrev||b.dataset.rot;
+      if(b.dataset.edit){const k=KEYS.find(x=>x.id==id);$('#dkEditBox').innerHTML=k?editPanel(k):'';
+        if(k)$('#edClose').onclick=()=>$('#dkEditBox').innerHTML='';
+        if(k)$('#edSave').onclick=async()=>{
+          const body={name:$('#edName').value,rate_limit:Number($('#edRate').value),quota_day:Number($('#edQuota').value||0),
+            scopes:[...document.querySelectorAll('.edScope:checked')].map(i=>i.value),
+            allowed_origins:$('#edOrigins').value.trim()||'*',note:$('#edNote').value.trim(),
+            active:$('#edActive').value==='1'};
+          const exp=Number($('#edExp').value); if(exp)body.expires_days=exp;
+          const r=await fetch('/api/devkeys/'+id,{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(x=>x.json());
+          if(r.ok){$('#dkEditBox').innerHTML='';K.toast('Настройки сохранены','ok',1800);loadKeys();}
+          else K.toast(r.hint||r.error||'Ошибка','err',2500);};
+        return;}
+      if(b.dataset.tog&&!b.disabled){await fetch('/api/devkeys/'+id+'/toggle',{method:'POST',credentials:'include'});loadKeys();}
+      if(b.dataset.rev){if(!confirm('Отозвать ключ? Он мгновенно перестанет работать на всех сайтах.'))return;
+        await fetch('/api/devkeys/'+id+'/revoke',{method:'POST',credentials:'include'});K.toast('Ключ отозван 🚫','warn',2200);loadKeys();}
+      if(b.dataset.unrev){await fetch('/api/devkeys/'+id+'/unrevoke',{method:'POST',credentials:'include'});K.toast('Ключ возвращён','ok',1800);loadKeys();}
+      if(b.dataset.rot){if(!confirm('Перевыпустить ключ? Старый значение сразу перестанет работать.'))return;
+        const j=await fetch('/api/devkeys/'+id+'/rotate',{method:'POST',credentials:'include'}).then(r=>r.json());
+        if(j.ok){showNewKey(j.key,'Перевыпущенный ключ');loadKeys();}}
+      if(b.dataset.del){if(!confirm('Удалить ключ навсегда?'))return;
+        await fetch('/api/devkeys/'+id,{method:'DELETE',credentials:'include'});loadKeys();}
     };
     loadKeys();
 

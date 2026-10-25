@@ -2,7 +2,11 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#05070f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>{% block title %}NetPulse{% endblock %}</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/css/inter@latest/cyrillic-400-normal.css">
@@ -30,6 +34,7 @@
     <a href="{{ url_for('search') }}"     data-tab="search">🔎 Поиск</a>
     <a href="{{ url_for('history') }}"    data-tab="history">🗂 История</a>
     <a href="{{ url_for('monitor') }}"    data-tab="monitor">📡 Мониторинг</a>
+    <a href="{{ url_for('assistant') }}"  data-tab="assistant">🤖 Ассистент</a>
     <a href="{{ url_for('settings') }}"   data-tab="settings">⚙ Настройки</a>
     <a href="{{ url_for('about') }}"      data-tab="about">ℹ О проекте</a>
   </div>
@@ -61,6 +66,7 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>window.NP = { clientId:"{{ google_client_id|default('') }}", page:"{{ page|default('') }}", user:{{ user|tojson if user else 'null' }} };</script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/assistant.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

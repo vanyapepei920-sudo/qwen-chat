@@ -2,8 +2,7 @@
 .env.bak
 __pycache__/
 *.pyc
-cache/
-data/
-logs/
 instance/
-*.db
+venv/
+logs/
+server.log

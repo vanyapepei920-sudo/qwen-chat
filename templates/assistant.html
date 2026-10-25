@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Ассистент — NetPulse{% endblock %}
+{% block content %}
+<div class="container"><div class="grid">
+  <section class="card glass col-8 chat-card">
+    <div class="card-h"><h3>🤖 Палс — помощник по сайту</h3><div class="spacer"></div>
+      <span class="tag" id="asStatus">…</span>
+      <button class="btn sm ghost danger" id="asClear">Очистить</button></div>
+    <div class="chat-log" id="chatLog">
+      <div class="msg assistant"><div class="bubble">Привет! Я Палс. Помогу разобраться в NetPulse: спидтест, пинг, мониторинг сайтов, Developer API и ключи <code>sp-test-…</code>. Справай!</div></div>
+    </div>
+    <form class="chat-input" id="chatForm" autocomplete="off">
+      <input class="inp big" id="chatText" placeholder="Например: как создать API-ключ для моего сайта?" maxlength="900">
+      <button class="btn primary" type="submit" id="chatSend">➤</button>
+    </form>
+    <p class="muted-note" style="margin-bottom:0">Бот работает на Google Gemini и знает только функции этого сайта. Ключ <code style="font-family:var(--mono)">GEMINI_API_KEY</code> задаётся в <code style="font-family:var(--mono)">.env</code>.</p>
+  </section>
+  <section class="card glass col-4">
+    <div class="card-h"><h3>Быстрые вопросы</h3></div>
+    <div class="quick-list" id="quickList">
+      <button class="q-btn">Как проверить скорость интернета?</button>
+      <button class="q-btn">Как добавить сайт в мониторинг?</button>
+      <button class="q-btn">Как создать Developer API ключ?</button>
+      <button class="q-btn">Чем test-ключ отличается от live?</button>
+      <button class="q-btn">Как ограничить ключ по домену и квоте?</button>
+      <button class="q-btn">Как включить уведомления в Telegram?</button>
+    </div>
+    <div class="card-h" style="margin-top:18px"><h3>Подключение Gemini</h3></div>
+    <ol class="steps-list">
+      <li>Зайди на <b>aistudio.google.com</b> → <b>Get API key</b> → Create API key.</li>
+      <li>Скопируй ключ (формат <code>AQ.…</code>).</li>
+      <li>В файл <code>.env</code> добавь: <code>GEMINI_API_KEY=…</code></li>
+      <li>Перезапусти сервер: <code>Ctrl+C → python app.py</code>.</li>
+    </ol>
+  </section>
+</div></div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/assistant.js') }}"></script>{% endblock %}

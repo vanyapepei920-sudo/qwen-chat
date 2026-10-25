@@ -27,25 +27,36 @@
   </section>
   <section class="card glass col-12">
     <div class="card-h"><h3>🧑‍💻 Developer API — свои ключи для ваших сайтов</h3><div class="spacer"></div>
-      <span class="tag">npk_… · CORS открыт</span></div>
+      <span class="tag">sp-test-… / sp-live-… · CORS открыт</span></div>
     <p style="color:var(--muted);font-size:13px;margin:0 0 10px">Создайте ключ и используйте наши эндпоинты со <b>своего</b> сайта или скрипта: ping, статус URL, DNS, whois, поиск Google, подсети, единицы, uptime-мониторинг. Ключ передаётся заголовком <code style="font-family:var(--mono)">X-NetPulse-Key</code>.</p>
     <form class="s-form" id="dkForm" autocomplete="off" style="flex-wrap:wrap;gap:8px">
       <input class="inp" id="dkName" placeholder="Название (например «мой сайт»)">
+      <select id="dkEnv" class="sel" title="Окружение ключа">
+        <option value="test" selected>🧪 test — для разработки</option>
+        <option value="live">🚀 live — боевой</option></select>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="basic" checked> basic (ping/status)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="net"> net (dns/whois)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="search"> search (Google)</label>
       <select id="dkRate" class="sel" title="Лимит запросов в минуту">
         <option value="30">30 зап./мин</option><option value="60" selected>60 зап./мин</option>
-        <option value="120">120 зап./мин</option><option value="300">300 зап./мин</option></select>
+        <option value="120">120 зап./мин</option><option value="300">300 зап./мин</option>
+        <option value="600">600 зап./мин</option></select>
+      <input class="inp" id="dkQuota" type="number" min="0" placeholder="Дневная квота (0 = безлимит)" style="max-width:210px">
+      <input class="inp" id="dkOrigins" placeholder="Разрешённые домены через запятую (по умолчанию *)" style="max-width:320px">
+      <select id="dkExpires" class="sel" title="Срок действия">
+        <option value="0" selected>Бессрочно</option><option value="7">7 дней</option>
+        <option value="30">30 дней</option><option value="90">90 дней</option><option value="365">1 год</option></select>
+      <input class="inp" id="dkNote" placeholder="Заметка (необязательно)" style="max-width:260px">
       <button class="btn" type="submit">＋ Создать ключ</button>
     </form>
     <div id="dkNew" hidden style="margin:10px 0"></div>
     <div class="tbl-wrap"><table><thead><tr><th>Название</th><th>Ключ</th><th>Scopes</th><th>Лимит</th><th>Запросов</th><th>Использовался</th><th></th></tr></thead>
       <tbody id="dkBody"><tr><td colspan="7" class="empty">Загрузка…</td></tr></tbody></table></div>
+    <div id="dkEditBox"></div>
     <details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px;color:var(--muted)">📖 Примеры использования на своём сайте</summary>
       <pre style="font-family:var(--mono);font-size:12px;overflow:auto;background:rgba(0,0,0,.25);padding:12px;border-radius:8px">// JavaScript — с любого сайта:
 const r = await fetch("https://ВАШ-NETPULSE/api/v1/ping?url=https://example.com",
-  {headers:{"X-NetPulse-Key":"npk_ВАШ_КЛЮЧ"}});
+  {headers:{"X-NetPulse-Key":"sp-test-ВАШ_КЛЮЧ"}});
 const j = await r.json();  // {ok:true, reachable:true, latency_ms:42.1}
 
 // curl / Python:
