@@ -1,15 +1,1 @@
-{% extends "base.html" %}
-{% block title %}DNS — NetPulse{% endblock %}
-{% block content %}
-<div class="container"><div class="grid">
-  <section class="card glass col-12">
-    <div class="card-h"><h3>Проверка DNS (DoH)</h3><div class="spacer"></div>
-      <input id="dnsHost" class="inp" value="example.com" placeholder="домен">
-      <button class="btn sm primary" id="dnsRun">▶ Проверить</button></div>
-    <div class="tbl-wrap"><table><thead><tr><th>Провайдер</th><th>IP‑адреса</th><th>CNAME</th><th>Время</th><th>Статус</th></tr></thead><tbody id="dnsBody"><tr><td colspan="5" class="empty">Введите домен и нажмите «Проверить»</td></tr></tbody></table></div>
-    <div class="card-h" style="margin-top:22px"><h3>Скорость разрешения (ping‑тест провайдеров)</h3></div>
-    <div class="stats" id="dnsStats"></div>
-  </section>
-</div></div>
-{% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/nettools.js') }}"></script>{% endblock %}
+eyUgZXh0ZW5kcyAiYmFzZS5odG1sIiAlfQp7JSBibG9jayB0aXRsZSAlfUROUyDigJQgTmV0UHVsc2V7JSBlbmRibG9jayAlfQp7JSBibG9jayBjb250ZW50ICV9CjxkaXYgY2xhc3M9ImNvbnRhaW5lciI+PGRpdiBjbGFzcz0iZ3JpZCI+CiAgPHNlY3Rpb24gY2xhc3M9ImNhcmQgZ2xhc3MgY29sLTEyIj4KICAgIDxkaXYgY2xhc3M9ImNhcmQtaCI+PGgzPtCf0YDQvtCy0LXRgNC60LAgRE5TIChEb0gpPC9oMz48ZGl2IGNsYXNzPSJzcGFjZXIiPjwvZGl2PgogICAgICA8aW5wdXQgaWQ9ImRuc0hvc3QiIGNsYXNzPSJpbnAiIHZhbHVlPSJleGFtcGxlLmNvbSIgcGxhY2Vob2xkZXI9ItC00L7QvNC10L0iPgogICAgICA8YnV0dG9uIGNsYXNzPSJidG4gc20gcHJpbWFyeSIgaWQ9ImRuc1J1biI+4pa2INCf0YDQvtCy0LXRgNC40YLRjDwvYnV0dG9uPjwvZGl2PgogICAgPGRpdiBjbGFzcz0idGJsLXdyYXAiPjx0YWJsZT48dGhlYWQ+PHRyPjx0aD7Qn9GA0L7QstCw0LnQtNC10YA8L3RoPjx0aD5JUOKAkdCw0LTRgNC10YHQsDwvdGg+PHRoPkNOQU1FPC90aD48dGg+0JLRgNC10LzRjzwvdGg+PHRoPtCh0YLQsNGC0YPRgTwvdGg+PC90cj48L3RoZWFkPjx0Ym9keSBpZD0iZG5zQm9keSI+PHRyPjx0ZCBjb2xzcGFuPSI1IiBjbGFzcz0iZW1wdHkiPtCS0LLQtdC00LjRgtC1INC00L7QvNC10L0g0Lgg0L3QsNC20LzQuNGC0LUgwqvQn9GA0L7QstC10YDQuNGC0YzCuzwvdGQ+PC90cj48L3Rib2R5PjwvdGFibGU+PC9kaXY+CiAgICA8ZGl2IGNsYXNzPSJjYXJkLWgiIHN0eWxlPSJtYXJnaW4tdG9wOjIycHgiPjxoMz7QodC60L7RgNC+0YHRgtGMINGA0LDQt9GA0LXRiNC10L3QuNGPIChwaW5n4oCR0YLQtdGB0YIg0L/RgNC+0LLQsNC50LTQtdGA0L7Qsik8L2gzPjwvZGl2PgogICAgPGRpdiBjbGFzcz0ic3RhdHMiIGlkPSJkbnNTdGF0cyI+PC9kaXY+CiAgPC9zZWN0aW9uPgo8L2Rpdj48L2Rpdj4KeyUgZW5kYmxvY2sgJX0KeyUgYmxvY2sgc2NyaXB0cyAlfTxzY3JpcHQgc3JjPSJ7eyB1cmxfZm9yKCdzdGF0aWMnLCBmaWxlbmFtZT0nanMvbmV0dG9vbHMuanMnKSB9fSI+PC9zY3JpcHQ+eyUgZW5kYmxvY2sgJX0K

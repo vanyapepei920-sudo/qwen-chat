@@ -1,7 +1,1 @@
-Flask==3.0.3
-Flask-Cors==4.0.1
-python-dotenv==1.0.1
-requests==2.32.3
-google-auth==2.32.0
-gunicorn==22.0.0
-python-whois==0.9.4
+Rmxhc2s9PTMuMC4zCkZsYXNrLUNvcnM9PTQuMC4xCnB5dGhvbi1kb3RlbnY9PTEuMC4xCnJlcXVlc3RzPT0yLjMyLjMKZ29vZ2xlLWF1dGg9PTIuMzIuMApndW5pY29ybj09MjIuMC4wCnB5dGhvbi13aG9pcz09MC45LjQK
