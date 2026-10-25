@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Настройки — NetPulse{% endblock %}
+{% block content %}
+<div class="container"><div class="grid">
+  <section class="card glass col-6">
+    <div class="card-h"><h3>Измерения</h3></div>
+    <label class="set-row"><span>Единицы скорости</span>
+      <select id="setUnits" class="sel"><option value="mbps">Мбит/с</option><option value="MBps">МБ/с</option></select></label>
+    <label class="set-row"><span>Окно live‑графика</span>
+      <select id="setWindow" class="sel"><option value="30000">30 с</option><option value="60000" selected>60 с</option><option value="120000">2 мин</option></select></label>
+    <label class="set-row"><span>Автозапуск мониторинга при входе</span>
+      <input type="checkbox" id="setAutoLive" class="chk"></label>
+    <label class="set-row"><span>Частота опроса по умолчанию</span>
+      <select id="setHz" class="sel"><option value="1">1 Гц</option><option value="2">2 Гц</option><option value="5">5 Гц</option></select></label>
+  </section>
+  <section class="card glass col-6">
+    <div class="card-h"><h3>Аккаунт и данные</h3></div>
+    <div class="kv" style="margin-bottom:16px">
+      <div class="k">Имя</div><div class="v" id="setName">—</div>
+      <div class="k">E‑mail</div><div class="v" id="setMail">—</div>
+      <div class="k">Google Sub</div><div class="v" id="setSub">—</div>
+      <div class="k">Статус</div><div class="v" id="setReg">—</div>
+    </div>
+    <button class="btn" id="setReauth" style="width:100%;margin-bottom:10px">🔄 Переподключить Google</button>
+    <button class="btn danger" id="setWipeLocal" style="width:100%;margin-bottom:10px">Очистить локальный кеш</button>
+    <button class="btn danger" id="setWipeServer" style="width:100%">Удалить историю с сервера</button>
+  </section>
+  <section class="card glass col-12">
+    <div class="card-h"><h3>О системе</h3></div>
+    <div class="stats">
+      <div class="stat"><div class="k">User Agent</div><div class="v" style="font-size:12px;font-family:'Inter';font-weight:400" id="setUA">—</div></div>
+      <div class="stat"><div class="k">Screen</div><div class="v" id="setScreen">—</div></div>
+      <div class="stat"><div class="k">Язык / TZ</div><div class="v" id="setLang">—</div></div>
+      <div class="stat"><div class="k">Сервер</div><div class="v" id="setHealth">—</div></div>
+    </div>
+  </section>
+</div></div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/misc.js') }}"></script>{% endblock %}
