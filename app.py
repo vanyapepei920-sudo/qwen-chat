@@ -600,7 +600,10 @@ DEV_ENDPOINTS = ["/info", "/ping?url=", "/status?url=", "/latency?host=&port=&n=
                  "/speedtest/start?bytes=&downloads=&upload=true", "/speedtest/result?id=",
                  "/speed?bytes=&downloads=&upload=", "/trace?url=", "/dns?host=", "/whois?domain=",
                  "/search?q=", "/subnet?cidr=", "/units?v=&from=&to=", "/ip", "/uptime?url=&interval_sec="]
-DEV_SCOPES = {"basic": ["ping", "status", "speed", "info"], "net": ["dns", "whois", "trace", "latency"],
+# «как у всех» (OpenAI/Stripe-стиль): scope basic даёт ВСЮ базовую диагностику, включая спидтест,
+# чтобы новый ключ без тонкой настройки сразу работал со всеми основными сервисами.
+DEV_SCOPES = {"basic": ["ping", "status", "speed", "dns", "latency", "trace", "subnet", "units", "ip", "info"],
+              "net": ["dns", "whois", "trace", "latency"],
               "search": ["search"],
               "all": ["ping", "status", "speed", "dns", "whois", "trace", "latency", "search",
                       "subnet", "units", "ip", "uptime", "info"]}
@@ -665,10 +668,12 @@ def _dev_auth():
     now_ms = int(time.time()*1000)
     if k["id"] == -1:                        # env-ключ: без счётчиков — сразу пропускаем
         return {"key": dict(k), "user": {"id": 0, "name": "API", "email": ""}}, None
-    # rate limit: скользящее окно 60 сек
-    cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
-                     (k["id"], now_ms-60000)).fetchone()["c"]
-    if cnt >= k["rate_limit"]: return None, "rate_limited"
+    # rate limit: скользящее окно 60 сек; 0 или больше 1000000 = безлимит
+    rl = k["rate_limit"] or 0
+    if 0 < rl <= 1_000_000:
+        cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
+                         (k["id"], now_ms-60000)).fetchone()["c"]
+        if cnt >= rl: return None, "rate_limited"
     qd = k["quota_day"] or 0                              # дневная квота (quota_day>0)
     if qd:
         day_cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
@@ -731,8 +736,9 @@ def _dev_scope(name):
     if name not in allowed:
         resp = jsonify(ok=False, error="insufficient_scope", scope=name, code=403,
                        message="Forbidden: insufficient scope",
-                       hint="Добавьте scope '%s' при создании ключа (пересоздайте ключ)." %
-                            next((s for s,e in DEV_SCOPES.items() if name in e), name))
+                       hint="У ключа нет доступа к сервису '%s'. Включите его: Настройки → Developer API → "
+                            "⚙ Изменить → отметьте scope (basic покрывает ping/спидтест/dns/trace, "
+                            "all — все сервисы сразу). Сохраните — изменения применяются мгновенно." % name)
         r = make_response(resp); r.status_code = 403
         r.headers["WWW-Authenticate"] = 'Bearer realm="NetPulse API", error="insufficient_scope"'
         return r

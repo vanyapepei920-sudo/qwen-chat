@@ -35,14 +35,15 @@
       <select id="dkEnv" class="sel" title="Окружение ключа">
         <option value="test" selected>🧪 test — для разработки</option>
         <option value="live">🚀 live — боевой</option></select>
-      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="basic" checked> basic (ping/status/speed)</label>
+      <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="basic" checked> basic (ping/status/спидтест/dns/latency/trace/subnet/units/ip)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="net"> net (dns/whois/trace/latency)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="chk" value="search"> search (Google)</label>
       <label style="font-size:12.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="dkAll" value="all"> ✨ all — доступ ко всем сервисам сразу</label>
       <select id="dkRate" class="sel" title="Лимит запросов в минуту">
         <option value="30">30 зап./мин</option><option value="60" selected>60 зап./мин</option>
         <option value="120">120 зап./мин</option><option value="300">300 зап./мин</option>
-        <option value="600">600 зап./мин</option></select>
+        <option value="600">600 зап./мин</option>
+        <option value="1000000">∞ без лимита</option></select>
       <input class="inp" id="dkQuota" type="number" min="0" placeholder="Дневная квота (0 = безлимит)" style="max-width:210px">
       <input class="inp" id="dkOrigins" placeholder="Разрешённые домены через запятую (по умолчанию *)" style="max-width:320px">
       <select id="dkExpires" class="sel" title="Срок действия">
