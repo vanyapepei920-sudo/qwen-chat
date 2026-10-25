@@ -20,10 +20,15 @@ except Exception:
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-GOOGLE_CLIENT_ID      = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET  = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_SEARCH_API_KEY = os.getenv("GOOGLE_SEARCH_API_KEY", "")
-GOOGLE_SEARCH_CX      = os.getenv("GOOGLE_SEARCH_CX", "")
+# Все Google-настройки читаются ТОЛЬКО из .env (см. .env.example) — в коде ключей нет.
+def _env(name, default=""):
+    """Читает переменную окружения; значения всегда берутся из .env / env, не из кода."""
+    return os.environ.get(name) or os.getenv(name, default) or ""
+
+GOOGLE_CLIENT_ID      = _env("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET  = _env("GOOGLE_CLIENT_SECRET")
+GOOGLE_SEARCH_API_KEY = _env("GOOGLE_SEARCH_API_KEY")
+GOOGLE_SEARCH_CX      = _env("GOOGLE_SEARCH_CX")
 WEBHOOK_URL           = os.getenv("WEBHOOK_URL", "")          # Discord/Telegram-bridge/slack — любой webhook
 TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")  # optional
 TELEGRAM_CHAT_ID      = os.getenv("TELEGRAM_CHAT_ID", "")    # optional
