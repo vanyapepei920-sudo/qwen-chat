@@ -218,6 +218,7 @@ def register():
 
 PAGES = {"dashboard":"Спидтест","ping":"Пинг","traceroute":"Трассировка","dns":"DNS",
          "wifi":"Wi‑Fi","search":"Поиск","history":"История","monitor":"Мониторинг",
+         "tools":"Интернет-инструменты",
          "assistant":"Ассистент","settings":"Настройки"}
 for _name in PAGES:
     def _mk(nm):
@@ -1354,6 +1355,295 @@ def dev_uptime_add():
     return jsonify(ok=True, id=mid, result=res)
 
 
+# ============ ИНТЕРНЕТ-ИНСТРУМЕНТЫ (страница «Инструменты») ============
+def _ssrf_guard(url):
+    """Разрешаем только http(s) и публичные адреса (защита от SSRF)."""
+    from urllib.parse import urlparse
+    import ipaddress, socket
+    if not URL_RE.match(url): return False
+    try:
+        host = urlparse(url).hostname or ""
+        infos = socket.getaddrinfo(host, None)
+        for i in infos:
+            ip = ipaddress.ip_address(i[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+    except Exception:
+        return False
+    return True
+
+@app.route("/api/tools/headers", methods=["GET"])
+@login_required
+def tool_headers():
+    url = (request.args.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")): return jsonify(ok=False, error="bad_url"), 400
+    if not _ssrf_guard(url): return jsonify(ok=False, error="private_or_invalid_host"), 400
+    chain, cur = [], url
+    try:
+        for _ in range(6):
+            r = http_lib.head(cur, timeout=10, allow_redirects=False,
+                              headers={"User-Agent": "NetPulseTools/1.0"})
+            info = {"url": cur[:300], "status": r.status_code,
+                    "server": r.headers.get("Server"), "content_type": r.headers.get("Content-Type")}
+            sec = {h: r.headers[h][:120] for h in
+                   ("Strict-Transport-Security", "Content-Security-Policy", "X-Frame-Options",
+                    "X-Content-Type-Options", "Referrer-Policy") if h in r.headers}
+            info["security_headers"] = sec
+            chain.append(info)
+            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("Location"):
+                loc = r.headers["Location"]
+                cur = loc if loc.startswith("http") else cur.rstrip("/") + loc
+            else:
+                break
+        return jsonify(ok=True, redirects=len(chain)-1, final_status=chain[-1]["status"], chain=chain)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)[:200]), 502
+
+@app.route("/api/tools/ping-tcp", methods=["GET"])
+@login_required
+def tool_ping_tcp():
+    """TCP-пинг с разбивкой DNS/TCP/TLS по хосту или URL."""
+    from urllib.parse import urlparse
+    import socket, ssl as _ssl
+    target = (request.args.get("host") or request.args.get("url") or "").strip()
+    if not target: return jsonify(ok=False, error="empty"), 400
+    scheme, port = "tcp", int(request.args.get("port", 0) or 0)
+    if "://" in target:
+        p = urlparse(target); host = p.hostname or ""; scheme = p.scheme; port = port or (443 if scheme == "https" else 80)
+    else:
+        host = target.split(":")[0]; port = port or 80
+    if not re.match(r"^[A-Za-z0-9.\-:_]{1,253}$", host): return jsonify(ok=False, error="bad_host"), 400
+    n = min(max(int(request.args.get("n", 4)), 1), 8)
+    t0 = time.perf_counter()
+    try: ip = socket.gethostbyname(host)
+    except Exception as e: return jsonify(ok=False, error=f"dns: {str(e)[:120]}"), 502
+    dns_ms = round((time.perf_counter()-t0)*1000, 1)
+    samples, tls_ms = [], None
+    for _ in range(n):
+        t1 = time.perf_counter()
+        try:
+            s = socket.create_connection((ip, port), timeout=5)
+            tcp = (time.perf_counter()-t1)*1000
+            if scheme == "https":
+                try:
+                    t2 = time.perf_counter()
+                    ctx = _ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = _ssl.CERT_NONE
+                    ss = ctx.wrap_socket(s, server_hostname=host); tls_ms = round((time.perf_counter()-t2)*1000, 1)
+                    cert = ss.peer_cert if hasattr(ss, "peer_cert") else {}
+                    ss.close()
+                except Exception:
+                    s.close()
+            else:
+                s.close()
+            samples.append(round(tcp, 1))
+        except Exception as e:
+            samples.append(None)
+    ok_s = [x for x in samples if x is not None]
+    return jsonify(ok=True, host=host, ip=ip, port=port, dns_ms=dns_ms,
+                   tcp_avg_ms=round(sum(ok_s)/len(ok_s), 1) if ok_s else None,
+                   tcp_min_ms=min(ok_s) if ok_s else None, tcp_max_ms=max(ok_s) if ok_s else None,
+                   tls_ms=tls_ms, samples=samples, loss_pct=round(100*(n-len(ok_s))/n, 1))
+
+@app.route("/api/tools/dns-full", methods=["GET"])
+@login_required
+def tool_dns_full():
+    """Полный DNS через Google DoH: A, AAAA, MX, TXT, NS, CNAME, SOA."""
+    host = (request.args.get("host") or "").strip().lower()
+    if not re.match(r"^[a-z0-9.\-]{2,253}$", host): return jsonify(ok=False, error="bad_host"), 400
+    out = {}
+    for typ in ("A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA"):
+        try:
+            j = http_lib.get("https://dns.google/resolve", params={"name": host, "type": typ},
+                             timeout=8, headers={"Accept": "application/dns-json"}).json()
+            ans = [{"data": a.get("data", "")[:160], "ttl": a.get("TTL")} for a in j.get("Answer", []) if a.get("type")]
+            out[typ] = {"status": j.get("Status", -1), "answers": ans}
+        except Exception as e:
+            out[typ] = {"status": -1, "error": str(e)[:100]}
+    return jsonify(ok=True, host=host, records=out)
+
+@app.route("/api/tools/ports", methods=["GET"])
+@login_required
+def tool_ports():
+    """Скан типовых портов на хосте (только публичные адреса)."""
+    import socket
+    host = (request.args.get("host") or "").strip()
+    if not re.match(r"^[A-Za-z0-9.\-]{1,253}$", host): return jsonify(ok=False, error="bad_host"), 400
+    try:
+        import ipaddress
+        ip = socket.gethostbyname(host)
+        pip = ipaddress.ip_address(ip)
+        if pip.is_private or pip.is_loopback or pip.is_link_local:
+            return jsonify(ok=False, error="private_host_forbidden"), 400
+    except Exception as e:
+        return jsonify(ok=False, error=f"dns: {str(e)[:100]}"), 502
+    COMMON = [(21,"FTP"),(22,"SSH"),(23,"Telnet"),(25,"SMTP"),(53,"DNS"),(80,"HTTP"),(110,"POP3"),
+              (143,"IMAP"),(443,"HTTPS"),(465,"SMTPS"),(587,"Submission"),(993,"IMAPS"),(995,"POP3S"),
+              (1723,"PPTP"),(3306,"MySQL"),(3389,"RDP"),(5432,"PostgreSQL"),(5900,"VNC"),(6379,"Redis"),
+              (8080,"HTTP-alt"),(8443,"HTTPS-alt"),(27017,"MongoDB")]
+    res = []
+    for port, name in COMMON:
+        st = "closed"
+        try:
+            s = socket.create_connection((ip, port), timeout=1.2); s.close(); st = "open"
+        except socket.timeout: st = "filtered"
+        except OSError: pass
+        res.append({"port": port, "service": name, "state": st})
+    return jsonify(ok=True, host=host, ip=ip, ports=res,
+                   open_count=sum(1 for r in res if r["state"] == "open"))
+
+@app.route("/api/tools/cidr", methods=["GET"])
+@login_required
+def tool_cidr_list():
+    """Списки IP диапазонов провайдеров РФ/СНГ (публичный источник CIDR-IP)."""
+    isp = (request.args.get("isp") or "").strip().lower()
+    country = (request.args.get("country") or "ru").strip().lower()
+    if not re.match(r"^[a-z\- ]{0,40}$", isp) or not re.match(r"^[a-z]{2}$", country):
+        return jsonify(ok=False, error="bad_query"), 400
+    try:
+        r = http_lib.get(f"https://cdn.jsdelivr.net/gh/ipipdotnet/ipdb@master/misc/as/{country}.cidr.php",
+                         timeout=12)
+        lines = [l.strip() for l in r.text.splitlines() if "|" in l]
+        out = []
+        for l in lines:
+            parts = l.split("|")
+            if len(parts) < 3: continue
+            desc = (parts[1] or "").lower()
+            if isp and isp not in desc: continue
+            out.append({"cidr": parts[2].split(",")[0].strip(), "isp": parts[1][:80]})
+            if len(out) >= 30: break
+        return jsonify(ok=True, country=country, query=isp, count=len(out), ranges=out[:30])
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)[:150]), 502
+
+@app.route("/api/tools/badges", methods=["GET"])
+@login_required
+def tool_badges():
+    """Статус-бейджи для сайта: shield.io / img.shields.io совместимый Markdown."""
+    subject = (request.args.get("subject") or "netpulse").strip()[:40]
+    status = (request.args.get("status") or "online").strip()[:40]
+    color = (request.args.get("color") or "brightgreen").strip()
+    if not re.match(r"^[a-zA-Z0-9 #_\-]+$", subject) or not re.match(r"^[a-zA-Z0-9 #_\-]+$", status):
+        return jsonify(ok=False, error="bad_chars"), 400
+    if not re.match(r"^[a-z0-9\-#]{1,20}$", color): color = "brightgreen"
+    from urllib.parse import quote
+    s, st = quote(subject), quote(status.replace("-", "--"))
+    u = f"https://img.shields.io/badge/{s}-{st}-{color}"
+    return jsonify(ok=True, url=u,
+                   markdown=f"![{subject}]({u})",
+                   html=f'<img src="{u}" alt="{subject}">',
+                   bbcode=f"[img]{u}[/img]")
+
+@app.route("/api/tools/useragent", methods=["GET"])
+@login_required
+def tool_useragent():
+    """Мой User-Agent, IP и браузерная информация со стороны сервера."""
+    fwd = request.headers.get("X-Forwarded-For", "")
+    client = (fwd.split(",")[0].strip() if fwd else "") or request.remote_addr or ""
+    geo = _geo_lookup(client) or _geo_lookup("")
+    ua = request.headers.get("User-Agent", "")
+    browser, engine = "—", "—"
+    low = ua.lower()
+    if "edg/" in low: browser = "Edge"
+    elif "opr/" in low or "opera" in low: browser = "Opera"
+    elif "chrome/" in low and "chromium" not in low: browser = "Chrome"
+    elif "firefox/" in low: browser = "Firefox"
+    elif "safari/" in low: browser = "Safari"
+    if "webkit" in low: engine = "WebKit"
+    elif "gecko" in low: engine = "Gecko"
+    os_name = "Other"
+    for k, v in (("windows","Windows"),("android","Android"),("iphone","iOS"),("ipad","iPad"),
+                 ("mac os x","macOS"),("macintosh","macOS"),("linux","Linux")):
+        if k in low: os_name = v; break
+    return jsonify(ok=True, user_agent=ua[:300], browser=browser, os=os_name,
+                   engine=engine, accept_lang=request.headers.get("Accept-Language","")[:60],
+                   ip=geo.get("ip") or client, geo={k: geo.get(k) for k in ("country","region","city","isp") if geo.get(k)})
+
+@app.route("/api/tools/http-status", methods=["GET"])
+@login_required
+def tool_http_status():
+    code = request.args.get("code", "")
+    TABLE = {100:"Continue",101:"Switching Protocols",200:"OK",201:"Created",202:"Accepted",
+             204:"No Content",206:"Partial Content",301:"Moved Permanently",302:"Found",
+             303:"See Other",304:"Not Modified",307:"Temporary Redirect",308:"Permanent Redirect",
+             400:"Bad Request",401:"Unauthorized",403:"Forbidden",404:"Not Found",405:"Method Not Allowed",
+             408:"Request Timeout",409:"Conflict",410:"Gone",413:"Payload Too Large",414:"URI Too Long",
+             418:"I'm a teapot",422:"Unprocessable Entity",429:"Too Many Requests",
+             500:"Internal Server Error",501:"Not Implemented",502:"Bad Gateway",
+             503:"Service Unavailable",504:"Gateway Timeout",505:"HTTP Version Not Supported"}
+    if not code: return jsonify(ok=True, table=[{"code":k,"name":v} for k,v in sorted(TABLE.items())])
+    try: c = int(code)
+    except ValueError: return jsonify(ok=False, error="bad_code"), 400
+    return jsonify(ok=True, code=c, name=TABLE.get(c, "Unknown"), class_of=c//100)
+
+@app.route("/api/tools/mime", methods=["GET"])
+@login_required
+def tool_mime():
+    ext = (request.args.get("ext") or "").strip().lower().lstrip(".")
+    q = (request.args.get("q") or "").strip().lower()
+    M = {"html":"text/html","css":"text/css","js":"application/javascript","json":"application/json",
+         "png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","svg":"image/svg+xml",
+         "webp":"image/webp","ico":"image/vnd.microsoft.icon","mp3":"audio/mpeg","mp4":"video/mp4",
+         "webm":"video/webm","wav":"audio/wav","ogg":"audio/ogg","pdf":"application/pdf",
+         "zip":"application/zip","gz":"application/gzip","tar":"application/x-tar","rar":"application/vnd.rar",
+         "txt":"text/plain","csv":"text/csv","xml":"application/xml","md":"text/markdown",
+         "woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf",
+         "exe":"application/vnd.microsoft.portable-executable","apk":"application/vnd.android.package-archive",
+         "ipa":"application/octet-stream","docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+         "xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+         "pptx":"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+         "wasm":"application/wasm","toml":"application/toml","yaml":"application/yaml","yml":"application/yaml"}
+    if ext: return jsonify(ok=True, ext=ext, mime=M.get(ext), known=ext in M)
+    if q:   return jsonify(ok=True, results=[{"ext":k,"mime":v} for k,v in M.items() if q in k or q in v][:20])
+    return jsonify(ok=True, count=len(M), examples=dict(list(M.items())[:12]))
+
+@app.route("/api/tools/url-parse", methods=["GET"])
+@login_required
+def tool_url_parse():
+    from urllib.parse import urlparse, parse_qs, unquote
+    url = (request.args.get("url") or "").strip()
+    if not url: return jsonify(ok=False, error="empty"), 400
+    try: p = urlparse(url)
+    except Exception as e: return jsonify(ok=False, error=str(e)[:120]), 400
+    qs = {k: [unquote(x) for x in v] for k, v in parse_qs(p.query).items()}
+    host = p.hostname or ""
+    labels = host.split(".")
+    tld = ".".join(labels[-2:]) if len(labels) >= 2 else host
+    return jsonify(ok=True, url=url, scheme=p.scheme or "", host=host, port=p.port or "",
+                   path=p.path or "", query=p.query or "", fragment=p.fragment or "",
+                   username=p.username or "", password_masked=bool(p.password),
+                   params=qs, subdomain=".".join(labels[:-2]) if len(labels) > 2 else "",
+                   domain_tld=tld)
+
+@app.route("/api/tools/text", methods=["POST"])
+@login_required
+def tool_text():
+    d = request.get_json(silent=True) or {}
+    text = str(d.get("text", ""))[:100_000]
+    if not text: return jsonify(ok=False, error="empty_text"), 400
+    words = re.findall(r"[\wА-Яа-яЁё]+", text)
+    lines = text.splitlines()
+    sentences = re.split(r"[.!?…]+", text.strip())
+    def slugify(s):
+        TR = {"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"yo","ж":"zh","з":"z","и":"i",
+              "й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t",
+              "у":"u","ф":"f","х":"h","ц":"ts","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"",
+              "э":"e","ю":"yu","я":"ya"}
+        s = "".join(TR.get(ch, ch) for ch in s.lower())
+        return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", s)).strip("-")[:80]
+    return jsonify(ok=True, chars=len(text), chars_no_space=len(text.replace(" ", "")),
+                   words=len(words), lines=len(lines), paragraphs=len([x for x in text.split("\n\n") if x.strip()]),
+                   sentences=max(len([x for x in sentences if x.strip()]), 1),
+                   unique_words=len(set(w.lower() for w in words)),
+                   read_min=round(len(words)/200, 1), speak_min=round(len(words)/130, 1),
+                   upper=text.upper(), lower=text.lower(), swapcase=text.swapcase(),
+                   reversed=text[::-1], snake=re.sub(r"(?<!^)(?=[A-Z])", "_", text.strip()).lower()[:120],
+                   kebab=re.sub(r"\s+", "-", text.strip().lower())[:120], camel=re.sub(r"\s+(.)", lambda m: m.group(1).upper(), text.strip())[:120],
+                   slug=slugify(text.strip()), base64=base64.b64encode(text.encode()).decode()[:5000],
+                   rot13=text.translate(str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                        "nopqrstuvwxyzabcdefghijklmNOPQRSTUVWXYZABCDEFGHIJKLM")),
+                   top_words=sorted(((w.lower(), c) for w, c in
+                        __import__("collections").Counter(words).items()), key=lambda x: -x[1])[:8])
+
 # ============ БОТ-ПОМОЩНИК — бэкенд генерации текста (без ключей) ============
 # Модель задаётся в .env: ASSISTANT_MODEL (по умолчанию openai)
 # адреса текстовых бэкендов помощника (переопределяются в .env: ASSISTANT_API_URL=url1,url2).
@@ -1432,7 +1722,12 @@ ASSISTANT_SYSTEM_PROMPT = (
     "IP-инфо и uptime-мониторинг, а также утилиты v9: кодирование base64/url/hex (/api/v1/encode), "
     "хеш-суммы md5/sha1/sha256/sha512 + HMAC (/api/v1/hash?text=&algo=all&key=), генератор UUID/токенов "
     "(/api/v1/uuid?n=&kind=uuid4|hex|digits|token), QR-код в виде SVG (/api/v1/qrcode?text=...), "
-    "проверка HTTP-заголовков и редиректов сайта с HSTS/CSP/X-Frame-Options (/api/v1/http-headers?url=). "
+    "проверка HTTP-заголовков и редиректов сайта с HSTS/CSP/X-Frame-Options (/api/v1/http-headers?url=).\n"
+    "Страница «Интернет-инструменты» (вкладка 🧰 Инструменты): TCP-пинг с разбивкой DNS/TCP/TLS, полный DNS "
+    "(A/AAAA/MX/TXT/NS/CNAME/SOA), проверка HTTP-заголовков и цепочки редиректов, скан 22 типовых портов, "
+    "IP-диапазоны провайдеров по странам, генератор shield.io-бейджей, разбор URL на части, справочник "
+    "HTTP-кодов и MIME-типов, анализ текста (слова/символы/slugs/base64/rot13), «мой User-Agent и IP». "
+    "Эти функции доступны пользователям сайта в разделе Инструменты. "
     "Если пользователь хочет использовать наш спидтест или сеть-сервисы "
     "на своём сайте — покажи пример с нужным эндпоинтом.\n"
     "Пример для пользователя (показывай кодом):\n"
