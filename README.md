@@ -30,7 +30,7 @@
 ## Запуск
 ```bash
 pip install -r requirements.txt
-cp .env .env.local        # при необходимости отредактируйте
+cp .env.example .env      # при необходимости отредактируйте
 python app.py             # http://127.0.0.1:5000/store
 ```
 
@@ -44,10 +44,15 @@ uploads/apps|icons      — файлы приложений и иконки
 ```
 
 ## Настройки (.env)
+Полный образец со комментариями — в файле [`.env.example`](.env.example).
+
 | Переменная | Назначение |
 |---|---|
 | GOOGLE_CLIENT_ID | OAuth Client ID Google |
 | FLASK_SECRET_KEY | ключ сессий |
+| FLASK_DEBUG | режим отладки (True/False) |
+| SESSION_LIFETIME_HOURS | время жизни сессии, ч |
+| HOST / PORT | хост и порт dev-сервера |
 | ADMIN_PASSWORD | пароль для /admin_streaker (пусто = задать при первом вводе) |
 | DEMO_LOGIN | True — разрешить демо-вход |
 | MAX_APP_SIZE_MB | лимит размера загружаемого файла |
