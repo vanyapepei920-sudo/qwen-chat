@@ -8,7 +8,11 @@
       <h1>Создайте аккаунт</h1>
       <p>Регистрация через Google — быстро и безопасно</p>
     </div>
+    {% if google_client_id %}
     <div id="gbtn" style="display:flex;justify-content:center;margin-top:8px"></div>
+    {% else %}
+    <div class="gauth-fallback">Регистрация через Google появится после настройки <code>GOOGLE_CLIENT_ID</code> (см. .env.example)</div>
+    {% endif %}
     <div class="divider"><span>или</span></div>
     <button class="btn" style="width:100%" onclick="sfDemoLogin(this)">Попробовать в демо‑режиме</button>
     <p class="switch">Уже есть аккаунт? <a href="{{ url_for('login') }}">Войти</a></p>

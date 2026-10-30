@@ -50,6 +50,16 @@ log = logging.getLogger("scuarfy")
 
 app = Flask(__name__, template_folder="templates",
             static_folder="assets", static_url_path="/assets")
+
+
+@app.before_request
+def _inject_user():
+    """session['user'] доступен в шаблонах как current_user (user передаётся явно)."""
+    g.current_user = session.get("user")
+
+@app.context_processor
+def inject_globals():
+    return {"google_client_id": genv("GOOGLE_CLIENT_ID")}
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=SESSION_HOURS)
 app.config["MAX_CONTENT_LENGTH"] = MAX_APP_MB * 1024 * 1024
@@ -179,7 +189,7 @@ def login_required_html(fn):
     @wraps(fn)
     def w(*a, **k):
         if not session.get("user"):
-            return redirect(url_for("login"))
+            return redirect(url_for("login", next=request.path))
         return fn(*a, **k)
     return w
 
@@ -226,7 +236,7 @@ def admin_required_html(fn):
     @wraps(fn)
     def w(*a, **k):
         if not session.get("user"):
-            return redirect(url_for("login"))
+            return redirect(url_for("login", next=request.path))
         if not is_admin():
             return render_template("403.html", user=session["user"], page="store-admin"), 403
         return fn(*a, **k)
@@ -323,13 +333,15 @@ def root():
 
 @app.route("/login")
 def login():
-    if session.get("user"): return redirect(url_for("store"))
-    return render_template("login.html", google_client_id=genv("GOOGLE_CLIENT_ID"), page="login")
+    nxt = request.args.get("next", "")
+    if session.get("user"):
+        return redirect(nxt if nxt.startswith("/") else url_for("store"))
+    return render_template("login.html", user=None, page="login")
 
 @app.route("/register")
 def register():
     if session.get("user"): return redirect(url_for("store"))
-    return render_template("register.html", google_client_id=genv("GOOGLE_CLIENT_ID"), page="register")
+    return render_template("register.html", user=None, page="register")
 
 @app.route("/store")
 @login_required_html

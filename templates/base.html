@@ -43,7 +43,7 @@
 
 <div id="toasts"></div>
 
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+{% if google_client_id %}<script src="https://accounts.google.com/gsi/client" async defer></script>{% endif %}
 <script>window.SF = { clientId:"{{ google_client_id|default('') }}", page:"{{ page|default('') }}", user:{{ user|tojson if user else 'null' }} };</script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 {% block scripts %}{% endblock %}
