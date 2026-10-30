@@ -3,11 +3,12 @@ Google-вход, категории, загрузка приложений (ад
 рекомендации (по лайкам, скачиваниям и оценкам), поиск.
 Секретная страница активации прав администратора: /admin_streaker
 """
-import os, re, time, json, uuid, sqlite3, logging, secrets, hashlib
+import os, re, time, json, uuid, sqlite3, logging, secrets, hashlib, base64
 from pathlib import Path
 from datetime import timedelta, datetime
 from functools import wraps
 
+import requests
 from dotenv import load_dotenv
 from flask import (Flask, render_template, request, jsonify, session,
                    g, redirect, url_for, send_file)
@@ -157,6 +158,25 @@ def _profile_from_payload(payload):
     return {"sub": str(payload.get("sub")), "name": payload.get("name", ""),
             "email": payload.get("email", ""), "picture": payload.get("picture", "")}
 
+def _jwt_decode_unverified(token):
+    """Раскодировать JWT без проверки подписи (для диагностики и claims)."""
+    parts = token.split(".")
+    if len(parts) < 2: raise ValueError("не JWT: мало сегментов")
+    def b64(s): return json.loads(base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)))
+    return b64(parts[0]), b64(parts[1])
+
+GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+_certs_cache = {"ts": 0, "certs": None}
+
+def _google_certs():
+    """Публичные ключи Google (кэшируются на 1 час)."""
+    if _certs_cache["certs"] and time.time() - _certs_cache["ts"] < 3600:
+        return _certs_cache["certs"]
+    r = requests.get(GOOGLE_CERTS_URL, timeout=10); r.raise_for_status()
+    certs = {c["kid"]: c for c in r.json().get("keys", [])}
+    _certs_cache.update(ts=time.time(), certs=certs)
+    return certs
+
 def verify_google_token(token):
     cid = genv("GOOGLE_CLIENT_ID")
     if not token:
@@ -171,26 +191,33 @@ def verify_google_token(token):
             if p: return p
         except Exception as e:
             log.warning("google verify (google-auth): %s", e)
-    # 2) Фолбэк: проверка подписи через JWKS + audience вручную
+    # 2) Фолбэк: PyJWT + JWKS (если google-auth не установлен или недоступен)
     try:
-        from google.auth import jwt as _g_jwt
-        data = _g_jwt.decode(token, verify=False)
-        certs_url = data.get("iss", "https://accounts.google.com") + "/oauth2/v3/certs"
-        certs = _g_jwt.fetch_certs(_g_requests.Request(), certs_url)
-        aud = data.get("aud") or []
-        aud_set = {aud} if isinstance(aud, str) else set(aud)
-        ok_aud = cid in aud_set or genv("GOOGLE_CLIENT_SECRET") in aud_set
+        import jwt as _pyjwt
+        header, data = _jwt_decode_unverified(token)
+        certs = _google_certs()
+        from jwt import PyJWK as _PyJWK
+        jwk_obj = certs.get(header.get("kid"))
+        if not jwk_obj:
+            log.warning("google verify (jwks): ключ kid=%s не найден", header.get("kid")); return None
+        jwk = _PyJWK.from_dict(jwk_obj).key  # cryptography public key
+        aud = data.get("aud")
+        aud_set = {aud} if isinstance(aud, str) else set(aud or [])
         issuer_ok = data.get("iss") in ("https://accounts.google.com", "accounts.google.com")
-        if issuer_ok and ok_aud and int(data.get("exp", 0)) > time.time():
-            _g_jwt.verify_signature(data, certs)  # проверяем подпись по kid
-            p = _profile_from_payload(data)
-            if p:
-                log.info("google verify: токен принят через JWKS-фолбэк")
-                return p
-        log.warning("google verify: JWKS-фолбэк не прошёл (iss=%s aud=%s exp ok=%s)",
-                    data.get("iss"), aud, int(data.get("exp", 0)) > time.time())
-    except AttributeError:
-        pass  # старая версия google-auth без fetch_certs — основной путь уже отработал
+        if not issuer_ok:
+            log.warning("google verify (jwks): неверный iss=%s", data.get("iss")); return None
+        if cid not in aud_set:
+            log.warning("google verify (jwks): audience=%s не совпадает с GOOGLE_CLIENT_ID", aud); return None
+        if int(data.get("exp", 0)) < time.time():
+            log.warning("google verify (jwks): срок токена истёк"); return None
+        payload = _pyjwt.decode(token, jwk, algorithms=["RS256"], audience=cid,
+                                issuer=("https://accounts.google.com", "accounts.google.com"))
+        p = _profile_from_payload(payload)
+        if p:
+            log.info("google verify: токен принят через PyJWT+JWKS-фолбэк")
+            return p
+    except ImportError:
+        log.warning("google verify: pyjwt не установлен — фолбэк недоступен")
     except Exception as e:
         log.warning("google verify (jwks): %s", e)
     return None
@@ -461,6 +488,11 @@ def store_admin():
 def auth_google():
     body = request.get_json(silent=True) or {}
     cred = body.get("credential")
+    cid = genv("GOOGLE_CLIENT_ID")
+    if not cid:
+        log.error("auth/google: GOOGLE_CLIENT_ID не настроен на сервере")
+        return jsonify(ok=False, error="server_not_configured",
+                       hint="Задайте GOOGLE_CLIENT_ID в .env / переменных окружения и перезапустите приложение"), 500
     if not cred:
         log.warning("auth/google: credential отсутствует в запросе")
         return jsonify(ok=False, error="missing_credential"), 400
@@ -478,7 +510,7 @@ def auth_google():
                         int(cl.get("exp", 0)) < time.time())
         except Exception:
             pass
-        log.warning("auth/google: токен не принят (%s)", diag or "не удалось разобрать JWT")
+        log.warning("auth/google: токен не принят (%s) | google_auth=%s | client_id=%s", diag or "не удалось разобрать JWT", HAVE_GOOGLE_AUTH, (cid[:24] + "...") if cid else "<пусто>")
         return jsonify(ok=False, error="invalid_token",
                        hint="Проверьте GOOGLE_CLIENT_ID и что сайт добавлен в Authorized JavaScript origins"), 401
     p = _upsert_user(p)
