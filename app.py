@@ -150,15 +150,49 @@ def _migrate_public_ids():
         log.warning("migrate public ids: %s", e)
 
 # ---------------- Google / авторизация ----------------
+def _profile_from_payload(payload):
+    """Извлечение профиля из проверенных claims ID-токена."""
+    if not payload.get("email") and not payload.get("sub"):
+        return None
+    return {"sub": str(payload.get("sub")), "name": payload.get("name", ""),
+            "email": payload.get("email", ""), "picture": payload.get("picture", "")}
+
 def verify_google_token(token):
+    cid = genv("GOOGLE_CLIENT_ID")
+    if not token:
+        log.warning("google verify: пустой credential"); return None
+    if not cid:
+        log.warning("google verify: GOOGLE_CLIENT_ID не настроен"); return None
+    # 1) Официальная библиотека (проверка подписи JWS и audience=client_id)
+    if HAVE_GOOGLE_AUTH:
+        try:
+            info = _g_id_token.verify_oauth2_token(token, _g_requests.Request(), cid)
+            p = _profile_from_payload(info)
+            if p: return p
+        except Exception as e:
+            log.warning("google verify (google-auth): %s", e)
+    # 2) Фолбэк: проверка подписи через JWKS + audience вручную
     try:
-        if HAVE_GOOGLE_AUTH:
-            info = _g_id_token.verify_oauth2_token(
-                token, _g_requests.Request(), genv("GOOGLE_CLIENT_ID"))
-            return {"sub": str(info.get("sub")), "name": info.get("name", ""),
-                    "email": info.get("email", ""), "picture": info.get("picture", "")}
+        from google.auth import jwt as _g_jwt
+        data = _g_jwt.decode(token, verify=False)
+        certs_url = data.get("iss", "https://accounts.google.com") + "/oauth2/v3/certs"
+        certs = _g_jwt.fetch_certs(_g_requests.Request(), certs_url)
+        aud = data.get("aud") or []
+        aud_set = {aud} if isinstance(aud, str) else set(aud)
+        ok_aud = cid in aud_set or genv("GOOGLE_CLIENT_SECRET") in aud_set
+        issuer_ok = data.get("iss") in ("https://accounts.google.com", "accounts.google.com")
+        if issuer_ok and ok_aud and int(data.get("exp", 0)) > time.time():
+            _g_jwt.verify_signature(data, certs)  # проверяем подпись по kid
+            p = _profile_from_payload(data)
+            if p:
+                log.info("google verify: токен принят через JWKS-фолбэк")
+                return p
+        log.warning("google verify: JWKS-фолбэк не прошёл (iss=%s aud=%s exp ok=%s)",
+                    data.get("iss"), aud, int(data.get("exp", 0)) > time.time())
+    except AttributeError:
+        pass  # старая версия google-auth без fetch_certs — основной путь уже отработал
     except Exception as e:
-        log.warning("google token: %s", e)
+        log.warning("google verify (jwks): %s", e)
     return None
 
 def _upsert_user(p):
@@ -427,9 +461,26 @@ def store_admin():
 def auth_google():
     body = request.get_json(silent=True) or {}
     cred = body.get("credential")
-    if not cred: return jsonify(ok=False, error="missing_credential"), 400
+    if not cred:
+        log.warning("auth/google: credential отсутствует в запросе")
+        return jsonify(ok=False, error="missing_credential"), 400
     p = verify_google_token(cred)
-    if not p: return jsonify(ok=False, error="invalid_token"), 401
+    if not p:
+        #диагностика: логируем claims без проверки подписи (только iss/aud/exp — не секреты)
+        diag = ""
+        try:
+            import base64
+            parts = cred.split(".")
+            if len(parts) >= 2:
+                pl = parts[1] + "=" * (-len(parts[1]) % 4)
+                cl = json.loads(base64.urlsafe_b64decode(pl))
+                diag = "iss=%s aud=%s exp_past=%s" % (cl.get("iss"), cl.get("aud"),
+                        int(cl.get("exp", 0)) < time.time())
+        except Exception:
+            pass
+        log.warning("auth/google: токен не принят (%s)", diag or "не удалось разобрать JWT")
+        return jsonify(ok=False, error="invalid_token",
+                       hint="Проверьте GOOGLE_CLIENT_ID и что сайт добавлен в Authorized JavaScript origins"), 401
     p = _upsert_user(p)
     session.permanent = True; session["user"] = p
     log.info("Вход: %s <%s>", p.get("name"), p.get("email"))

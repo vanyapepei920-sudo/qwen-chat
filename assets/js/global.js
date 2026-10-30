@@ -35,15 +35,26 @@ document.addEventListener('DOMContentLoaded', ()=>{
   }
 });
 async function sfGoogleResponse(resp){
-  const r = await fetch('/api/auth/google',{method:'POST',credentials:'include',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
-  const j = await r.json();
+  if(!resp || !resp.credential){ toast('Google не вернул токен, попробуйте ещё раз','err'); return; }
+  let j;
+  try{
+    const r = await fetch('/api/auth/google',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
+    j = await r.json();
+  }catch(e){ toast('Не удалось связаться с сервером','err'); return; }
   if(j.ok){
     const p=new URLSearchParams(location.search);
     let next=p.get('next')||'/store';
     if(!next.startsWith('/')||next.startsWith('//')) next='/store';
     location.href=next;
-  } else toast(j.error==='invalid_token'||j.error==='missing_credential'?'Сессия Google недействительна, попробуйте ещё раз':'Не удалось войти через Google (сервер не настроен)','err');
+  } else {
+    let msg = 'Не удалось войти через Google';
+    if(j.error==='missing_credential') msg='Сессия Google недействительна — попробуйте ещё раз';
+    else if(j.error==='invalid_token') msg='Google-токен отклонён сервером. '+(j.hint||'Проверьте настройку GOOGLE_CLIENT_ID.');
+    else if(j.error==='server_not_configured') msg='На сервере не задан GOOGLE_CLIENT_ID (см. .env.example)';
+    toast(msg,'err');
+    console.error('Google sign-in error:', j);
+  }
 }
 window.sfDemoLogin = async function(btn){
   if(btn){btn.disabled=true;btn.textContent='Вход…';}
