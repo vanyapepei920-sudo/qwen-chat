@@ -637,141 +637,9 @@ def _store_save_file(f):
         return None, "Не удалось сохранить файл"
     return dest, None
 
-# ---------------- Заявки организаций: PDF ----------------
-def _pdf_font_path():
-    for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-              "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-              "/data/data/com.termux/files/usr/share/fonts/dejavu-ttf/DejaVuSans.ttf",
-              str(BASE_DIR / "assets" / "fonts" / "DejaVuSans.ttf")]:
-        if os.path.isfile(p):
-            return p
-    return None
-
-def _make_request_pdf(req):
-    """Возвращает относительный путь к документу заявки.
-
-    Приоритет: PDF (fpdf2, если установлен) → текстовый отчёт .txt
-    (работает всегда, без сторонних зависимостей).
-    """
-    req = dict(req)
-    rel = _request_pdf(req)
-    if not rel:
-        rel = _request_txt(req)
-    return rel
-
-
-def _request_fields(req):
-    """Упорядоченный список пар (метка, значение) для отчёта заявки."""
-    return [
-        ("Номер заявки", req.get("uuid")),
-        ("Тип заявителя", "Игровая студия / игра" if req.get("org_type") == "game" else "Организация / компания"),
-        ("ФИО контактного лица", f'{req.get("last_name","")} {req.get("first_name","")}'.strip()),
-        ("Название организации", req.get("org_name")),
-        ("Email", req.get("email")),
-        ("Телефон", req.get("phone")),
-        ("Страна / регион", req.get("country")),
-        ("Сайт", req.get("website")),
-        ("Планируемое приложение", req.get("app_name")),
-        ("Краткое описание приложения", req.get("app_desc")),
-        ("Дополнительная информация", req.get("message")),
-        ("Аккаунт отправителя", f'{req.get("user_name","")} <{req.get("user_email","")}>'),
-        ("Дата подачи заявки", str(req.get("created_at","")).replace("T", " ")),
-        ("Статус", {"pending": "На рассмотрении", "approved": "Одобрена",
-                    "rejected": "Отклонена"}.get(req.get("status"), req.get("status"))),
-        ("Комментарий администратора", req.get("admin_note")),
-    ]
-
-
-def _request_txt(req):
-    """Текстовый отчёт заявки — фолбэк без fpdf2/Pillow (Termux-safe)."""
-    rel = f"uploads/requests/{req['uuid']}.txt"
-    path = BASE_DIR / rel
-    lines = ["SCUARFY STORE — ЗАЯВКА ОРГАНИЗАЦИИ",
-             "Запрос на публикацию приложений от имени организации", "=" * 48, ""]
-    for label, value in _request_fields(req):
-        value = str(value or "").strip()
-        if value:
-            lines.append(f"{label}: {value}")
-    lines += ["", "-" * 48,
-              "Документ сформирован автоматически в Scuarfy Store.",
-              "Администратор рассматривает заявку в панели управления и принимает решение."]
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return rel
-    except Exception as e:
-        log.warning("txt report: %s", e)
-        return ""
-
-
-def _request_pdf(req):
-    """Генерирует PDF-анкету заявки организации (fpdf2 + DejaVu для кириллицы)."""
-    try:
-        from fpdf import FPDF
-    except ImportError:
-        log.info("fpdf2 не установлен — используется текстовый отчёт (.txt)")
-        return ""
-    req = dict(req)
-    rel = f"uploads/requests/{req['uuid']}.pdf"
-    path = BASE_DIR / rel
-    pdf = FPDF(format="A4")
-    pdf.set_auto_page_break(True, margin=18)
-    font = _pdf_font_path()
-    family = "Helvetica"
-    if font:
-        pdf.add_font("DejaVu", "", font)
-        bold = font.replace("DejaVuSans.ttf", "DejaVuSans-Bold.ttf")
-        pdf.add_font("DejaVu", "B", bold if os.path.isfile(bold) else font)
-        family = "DejaVu"
-    else:
-        # фолбэк без юникод-шрифта: транслитерация, чтобы PDF всё равно сгенерировался
-        tr = str.maketrans({"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z",
-            "и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t",
-            "у":"u","ф":"f","х":"h","ц":"ts","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"'",
-            "э":"e","ю":"yu","я":"ya"})
-        def T(s): return (s or "").translate(tr)
-        for k in ("first_name","last_name","org_name","email","phone","country","website",
-                  "app_name","app_desc","message","user_name","user_email"):
-            req[k] = T(str(req.get(k) or ""))
-    def row(label, value):
-        value = str(value or "").strip()
-        if not value: return
-        pdf.set_font(family, "B", 11); pdf.cell(58, 7, label, border=0)
-        pdf.set_font(family, "", 11); pdf.multi_cell(0, 7, value); pdf.ln(1)
-    pdf.add_page()
-    pdf.set_fill_color(15, 108, 189); pdf.rect(0, 0, 210, 30, "F")
-    pdf.set_y(7); pdf.set_text_color(255, 255, 255)
-    pdf.set_font(family, "B", 17); pdf.cell(0, 9, "Scuarfy Store: заявка организации", 0, 1, "C")
-    pdf.set_font(family, "", 10); pdf.cell(0, 6, "Запрос на публикацию приложений от имени организации", 0, 1, "C")
-    pdf.set_text_color(0, 0, 0); pdf.set_y(36)
-    pdf.set_font(family, "B", 13)
-    pdf.cell(0, 8, f"Номер заявки: {req['uuid']}", 0, 1); pdf.ln(2)
-    row("Тип заявителя:", "Игровая студия / игра" if req.get("org_type") == "game" else "Организация / компания")
-    row("ФИО контактного лица:", f'{req.get("last_name","")} {req.get("first_name","")}'.strip())
-    row("Название организации:", req.get("org_name"))
-    row("Email:", req.get("email"))
-    row("Телефон:", req.get("phone"))
-    row("Страна / регион:", req.get("country"))
-    row("Сайт:", req.get("website"))
-    row("Планируемое приложение:", req.get("app_name"))
-    row("Краткое описание приложения:", req.get("app_desc"))
-    row("Дополнительная информация:", req.get("message"))
-    row("Аккаунт отправителя:", f'{req.get("user_name","")} <{req.get("user_email","")}>')
-    row("Дата подачи заявки:", str(req.get("created_at","")).replace("T", " "))
-    row("Статус:", {"pending":"На рассмотрении","approved":"Одобрена","rejected":"Отклонена"}.get(req.get("status"), req.get("status")))
-    if req.get("admin_note"):
-        row("Комментарий администратора:", req.get("admin_note"))
-    pdf.ln(4)
-    pdf.set_draw_color(180, 180, 180); y = pdf.get_y(); pdf.line(15, y, 195, y)
-    pdf.ln(3); pdf.set_font(family, "", 9); pdf.set_text_color(110, 110, 110)
-    pdf.multi_cell(0, 5, "Документ сформирован автоматически в Scuarfy Store. "
-                   "Администратор рассматривает заявку в панели управления и принимает решение.")
-    try:
-        pdf.output(str(path))
-        return rel
-    except Exception as e:
-        log.warning("pdf output: %s", e)
-        return ""
+# ---------------- Заявки организаций ----------------
+# PDF не используется: вся анкета хранится в БД и показывается в админ-панели
+# как заполненная форма; там же заявку можно принять или отклонить.
 
 # ---------------- Чат ИИ-помощника (Pollinations) ----------------
 AI_SYSTEM_PROMPT = (
@@ -784,7 +652,7 @@ AI_SYSTEM_PROMPT = (
     "- Каждому приложению выдаётся собственный публичный ID вида a3f2-9c1be4-77ab2-1f09dc34-88ae5b21.\n"
     "- Максимальный размер загружаемого файла приложения — 80 ГБ.\n"
     "- Загружать приложения могут только администраторы через панель /store-admin. Секретная страница активации прав — /admin_streaker (пароль активации); кнопки админки в интерфейсе нет — переход вручную.\n"
-    "- Организации и игровые студии могут запросить права публиковать свои приложения: форма «Запрос прав организации» (/store/request-access): имя, фамилия, название организации, контакты, данные о приложении. Заявка оформляется в PDF и уходит администраторам на рассмотрение (принять/отклонить).\n"
+    "- Организации и игровые студии могут запросить права публиковать свои приложения: форма «Запрос прав организации» (/store/request-access): имя, фамилия, название организации, контакты, данные о приложении. Заявка сохраняется в базе и видна администраторам в панели /store-admin (вкладка «Заявки») — PDF не используется, заявку можно принять или отклонить прямо там.\n"
     "- Приложения получают классы-бейджи: Бестселлер, На подъёме, Новинка, Выбор сообщества.\n"
     "- Вход через Google; пользователь может удалить или обновить только свой отзыв.\n"
     "Не выдумывай функции, которых нет. Если вопрос не про Scuarfy Store — помоги кратко и верни разговор к сервису. "
@@ -863,8 +731,8 @@ def _rulebot_answer(q):
     if has("организ", "компани", "студи", "игр", "права", "заявк", "access"):
         return ("Если вы организация или игровая студия, откройте «Запрос прав организации» "
                 "(кнопка внизу главной магазина или адрес /store/request-access). Заполните анкету: имя, "
-                "фамилия, название организации, контакты, данные о приложении. Анкета превращается в PDF "
-                "и попадает администраторам — они примут или отклонят заявку.")
+                "фамилия, название организации, контакты, данные о приложении. Заявка сохранится в базе и "
+                "будет видна администраторам во вкладке «Заявки» панели /store-admin — там её примут или отклонят.")
     if has("войти", "вход", "логин", "google", "аккаунт"):
         return ("Вход выполняется через Google. Аккаунт нужен, чтобы скачивать приложения, ставить лайки "
                 "и писать отзывы.")
@@ -958,14 +826,14 @@ def store_app(pid):
 @app.route("/store/request-access")
 @login_required_html
 def store_request_access():
-    """Форма запроса прав организации/игровой студии (заявка → PDF → админ-панель)."""
+    """Форма запроса прав организации/игровой студии (заявка → админ-панель, без PDF)."""
     db = get_db()
     mine = []
     u = session["user"]
     if u.get("sub"):
         mine = [dict(r) for r in db.execute(
-            "SELECT uuid,org_name,app_name,status,created_at FROM org_requests WHERE user_sub=? ORDER BY id DESC",
-            (u["sub"],)).fetchall()]
+            "SELECT uuid,org_name,app_name,status,admin_note,created_at FROM org_requests "
+            "WHERE user_sub=? ORDER BY id DESC", (u["sub"],)).fetchall()]
     return render_template("store_request_access.html", user=session["user"], page="request-access", mine=mine)
 
 @app.route("/ai")
@@ -1265,19 +1133,15 @@ def org_request_submit():
     if lf:
         logo_path = _save_image(lf, "brands")
     db = get_db()
-    cur = db.execute("""INSERT INTO org_requests(uuid,first_name,last_name,org_name,org_type,email,phone,
+    db.execute("""INSERT INTO org_requests(uuid,first_name,last_name,org_name,org_type,email,phone,
         country,website,app_name,app_desc,message,logo_path,user_sub,user_email,user_name,created_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (req_uuid, first_name, last_name, org_name, org_type, email, field("phone", 40),
          field("country", 60), field("website", 120), field("app_name", 120), field("app_desc", 1500),
          field("message", 3000), logo_path, u.get("sub") or "", u.get("email") or "", u.get("name") or "", now))
     db.commit()
-    row = db.execute("SELECT * FROM org_requests WHERE id=?", (cur.lastrowid,)).fetchone()
-    pdf_rel = _make_request_pdf(row)
-    if pdf_rel:
-        db.execute("UPDATE org_requests SET pdf_path=? WHERE id=?", (pdf_rel, cur.lastrowid)); db.commit()
     log.info("Оргзаявка %s от %s (%s)", req_uuid, org_name, u.get("email"))
-    return jsonify(ok=True, uuid=req_uuid, pdf=bool(pdf_rel))
+    return jsonify(ok=True, uuid=req_uuid)
 
 # ---------------- API: ИИ-помощник ----------------
 @app.route("/api/ai/chat", methods=["POST"])
@@ -1358,7 +1222,7 @@ def admin_org_decision(ruuid):
 
 @app.route("/uploads/<path:relpath>")
 def serve_upload(relpath):
-    """Раздача PDF заявок и загруженных файлов из uploads/ с проверкой пути."""
+    """Раздача загруженных изображений (логотипы организаций и т.п.) из uploads/ с проверкой пути."""
     base = (STORE_DIR.resolve())
     target = (base / relpath).resolve()
     try:
@@ -1367,8 +1231,7 @@ def serve_upload(relpath):
         abort(404)
     if not target.is_file():
         abort(404)
-    mime = "application/pdf" if target.suffix.lower() == ".pdf" else None
-    return send_file(target, mimetype=mime)
+    return send_file(target)
 
 # ---------------- API: админ (загрузка/редактирование) ----------------
 @app.route("/api/store/admin/apps", methods=["POST"])
@@ -1410,7 +1273,9 @@ def store_admin_update(aid):
     d = request.get_json(silent=True) or {}
     fields, vals = [], []
     for k in ("title", "publisher", "description", "tagline", "version"):
-        if k in d: fields.append(f"{k}=?"); vals.append(str(d[k]).strip()[:5000])
+        if k in d:
+            # int(...) приводит булевы значения к 0/1 и не даёт обрезать строки до «True»/«False»
+            fields.append(f"{k}=?"); vals.append(str(d[k] if isinstance(d[k], bool) else (d[k] or "")).strip()[:5000])
     if "category_id" in d:
         fields.append("category_id=?"); vals.append(int(d["category_id"] or 0) or None)
     if not fields: return jsonify(ok=False, error="nothing_to_update"), 400
@@ -1434,9 +1299,9 @@ def store_admin_replace_file(aid):
     if not r: return jsonify(ok=False, error="not_found"), 404
     f = request.files.get("file")
     if not f or not f.filename: return jsonify(ok=False, error="no_file"), 400
-    safe = f"{uuid.uuid4().hex[:10]}_{_safe_name(f.filename)}"
-    dest = STORE_DIR / "apps" / safe
-    f.save(dest)
+    dest, err = _store_save_file(f)   # та же проверка лимита {MAX_APP_GB} ГБ, что и при публикации
+    if err: return jsonify(ok=False, error="too_large", message=err), 400
+    safe = dest.name
     if r["filename"]:
         try: (STORE_DIR / "apps" / r["filename"]).unlink(missing_ok=True)
         except Exception: pass
@@ -1502,15 +1367,18 @@ def store_admin_revoke(aid):
 def e403(_e): return _json_err_page(403)
 @app.errorhandler(404)
 def e404(_e): return _json_err_page(404)
+@app.errorhandler(413)
+def e413(_e): return _json_err_page(413)
 @app.errorhandler(500)
 def e500(_e): return _json_err_page(500)
 
 def _json_err_page(code):
     if request.path.startswith("/api/"):
-        msg = {403: "Forbidden", 404: "Not found", 500: "Internal server error"}[code]
-        return jsonify(ok=False, error="server_error" if code == 500 else "not_found",
-                       code=code, message=msg), code
-    tpl = {403: "403.html", 404: "404.html", 500: "500.html"}[code]
+        msg = {403: "Forbidden", 404: "Not found", 413: "File too large",
+               500: "Internal server error"}[code]
+        err = {413: "too_large"}.get(code, "server_error" if code == 500 else "not_found")
+        return jsonify(ok=False, error=err, code=code, message=msg), code
+    tpl = {403: "403.html", 404: "404.html", 413: "404.html", 500: "500.html"}[code]
     try:
         return render_template(tpl, user=session.get("user")), code
     except Exception:
@@ -1520,6 +1388,7 @@ def _json_err_page(code):
 init_db()
 with app.app_context():
     _seed_categories()
+    _migrate_columns()
     _migrate_public_ids()
 
 if __name__ == "__main__":
