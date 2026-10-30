@@ -1,0 +1,132 @@
+/* ===== Магазин приложений (в стиле Microsoft Store) ===== */
+.store-wrap{max-width:1560px;margin:0 auto;padding:22px clamp(14px,3vw,34px) 90px}
+
+/* строка поиска как в MS Store */
+.st-search{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.st-search .box{flex:1;display:flex;align-items:center;background:rgba(255,255,255,.05);
+  border:1px solid var(--stroke-2);border-radius:12px;padding:0 14px;max-width:640px}
+.st-search .box:focus-within{border-color:var(--acc2);background:rgba(255,255,255,.08)}
+.st-search input{flex:1;background:transparent;border:none;outline:none;color:var(--txt);
+  padding:12px 8px;font-size:14px}
+.st-search .ic{opacity:.6}
+
+/* категории-чипы */
+.st-cats{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 12px;scrollbar-width:none}
+.st-cats::-webkit-scrollbar{display:none}
+.st-chip{white-space:nowrap;padding:8px 16px;border-radius:999px;border:1px solid var(--stroke);
+  background:rgba(255,255,255,.04);color:var(--txt);font-size:13px;cursor:pointer;transition:.18s;flex:0 0 auto}
+.st-chip:hover{background:rgba(255,255,255,.09)}
+.st-chip.on{background:linear-gradient(92deg,rgba(124,92,255,.35),rgba(0,229,255,.25));
+  border-color:rgba(0,229,255,.5);font-weight:600}
+
+/* заголовки разделов */
+.st-h{display:flex;align-items:center;gap:10px;margin:22px 2px 12px}
+.st-h h2{font-size:17px;font-weight:700;letter-spacing:-.2px}
+.st-h .spacer{flex:1}
+.st-sort{display:flex;gap:6px}
+.st-sort button{padding:6px 12px;border-radius:9px;font-size:12px;border:1px solid var(--stroke);
+  background:transparent;color:var(--muted);cursor:pointer;transition:.18s}
+.st-sort button.on{color:var(--txt);border-color:var(--acc2);background:rgba(0,229,255,.08)}
+
+/* карусель рекомендованных (hero) */
+.st-hero{display:flex;gap:14px;overflow-x:auto;padding:6px 2px 16px;scroll-snap-type:x mandatory}
+.st-hero::-webkit-scrollbar{height:6px}
+.st-hero::-webkit-scrollbar-thumb{background:var(--stroke-2);border-radius:3px}
+.hero-card{position:relative;flex:0 0 min(420px,84vw);scroll-snap-align:start;border-radius:16px;
+  overflow:hidden;border:1px solid var(--stroke);min-height:170px;display:flex;align-items:flex-end;
+  cursor:pointer;transition:.22s;background:linear-gradient(140deg,rgba(124,92,255,.25),rgba(0,229,255,.1))}
+.hero-card:hover{transform:translateY(-3px);box-shadow:0 20px 50px -20px rgba(0,229,255,.4)}
+.hero-card .hc-body{position:relative;z-index:2;padding:16px 18px;width:100%;
+  background:linear-gradient(transparent,rgba(5,7,15,.85) 60%)}
+.hero-card .hc-title{font-size:16px;font-weight:700}
+.hero-card .hc-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.hero-card .st-icon{width:52px;height:52px;margin-bottom:8px}
+
+/* сетка карточек */
+.st-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.app-card{background:rgba(255,255,255,.04);border:1px solid var(--stroke);border-radius:14px;
+  padding:14px;cursor:pointer;transition:.2s;display:flex;flex-direction:column;gap:8px}
+.app-card:hover{background:rgba(255,255,255,.08);border-color:var(--stroke-2);transform:translateY(-2px)}
+.app-card .row1{display:flex;gap:10px;align-items:center}
+.app-card .ttl{font-weight:600;font-size:13.5px;line-height:1.25;overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:1;-webkit-box-orient:vertical}
+.app-card .pub{font-size:11.5px;color:var(--muted)}
+.app-card .tagline{font-size:12px;color:var(--muted);line-height:1.4;flex:1;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.app-card .meta{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted-2)}
+.app-card .dl-btn{margin-top:auto}
+
+/* иконка приложения */
+.st-icon{width:44px;height:44px;border-radius:11px;flex:0 0 auto;display:flex;align-items:center;
+  justify-content:center;font-size:22px;background:linear-gradient(135deg,var(--acc1),var(--acc2));
+  color:#06101c;font-weight:800;overflow:hidden;border:1px solid rgba(255,255,255,.14)}
+.st-icon img{width:100%;height:100%;object-fit:cover}
+
+.stars{color:#ffcf5c;font-size:11.5px;letter-spacing:1px;white-space:nowrap}
+.stars .dim{opacity:.25}
+
+/* ---- страница приложения ---- */
+.sp-head{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:8px}
+.sp-head .st-icon{width:96px;height:96px;border-radius:20px;font-size:44px}
+.sp-title h1{font-size:24px;font-weight:800;letter-spacing:-.4px}
+.sp-title .pub{color:var(--muted);font-size:13px;margin-top:3px}
+.sp-meta{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0;color:var(--muted);font-size:12.5px}
+.sp-meta b{color:var(--txt);display:block;font-size:14px;font-weight:700}
+.sp-actions{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
+.btn.get{min-width:150px}
+.sp-desc{white-space:pre-wrap;line-height:1.65;font-size:14px;color:#d5daf0}
+
+.rev{display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--stroke)}
+.rev .av{width:36px;height:36px;border-radius:50%;overflow:hidden;background:rgba(255,255,255,.08);
+  flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:16px}
+.rev .av img{width:100%;height:100%;object-fit:cover}
+.rev .who{font-size:13px;font-weight:600}
+.rev .when{font-size:11px;color:var(--muted-2)}
+.rev .txt{font-size:13px;color:#c9cfe6;margin-top:4px;white-space:pre-wrap}
+
+.star-pick{display:flex;gap:4px;cursor:pointer;font-size:26px;color:rgba(255,255,255,.25);user-select:none}
+.star-pick span.on{color:#ffcf5c}
+.star-pick span:hover{transform:scale(1.12)}
+
+/* пустое состояние */
+.st-empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.st-empty .big{font-size:44px;margin-bottom:10px}
+
+/* ---- admin_streaker ---- */
+.as-page{min-height:70vh;display:flex;align-items:center;justify-content:center;padding:40px 16px}
+.as-card{width:min(430px,92vw);padding:34px 30px;border-radius:22px;text-align:center}
+.as-mark{width:74px;height:74px;margin:0 auto 16px;border-radius:20px;display:flex;align-items:center;
+  justify-content:center;font-size:36px;background:linear-gradient(135deg,var(--acc1),var(--acc2));
+  box-shadow:0 16px 40px -14px rgba(124,92,255,.8)}
+.as-card h1{font-size:21px;font-weight:800;margin-bottom:6px}
+.as-card p.sub{color:var(--muted);font-size:13px;line-height:1.5;margin-bottom:20px}
+.as-form{display:flex;flex-direction:column;gap:10px}
+.as-form .inp{width:100%;padding:13px 15px;font-size:15px;border-radius:12px;text-align:center;
+  letter-spacing:2px}
+.as-hint{font-size:11.5px;color:var(--muted-2);margin-top:12px;line-height:1.5}
+.as-ok{color:var(--acc3)}
+
+/* ---- админ-панель ---- */
+.sa-tabs{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+.sa-tab{padding:9px 18px;border-radius:11px;border:1px solid var(--stroke);background:transparent;
+  color:var(--muted);cursor:pointer;font-size:13px;transition:.18s}
+.sa-tab.on{color:var(--txt);background:rgba(124,92,255,.16);border-color:rgba(124,92,255,.5);font-weight:600}
+.sa-panel[hidden]{display:none}
+.sa-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:end}
+.sa-form .fld{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+.sa-form .fld .inp,.sa-form .fld .sel{width:100%}
+.sa-form textarea.inp{min-height:90px;resize:vertical;font-family:inherit}
+.sa-form .full{grid-column:1/-1}
+table.sa-table{width:100%;border-collapse:collapse;font-size:13px}
+.sa-table th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;
+  letter-spacing:.8px;padding:8px 10px;border-bottom:1px solid var(--stroke)}
+.sa-table td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
+.sa-table tr:hover td{background:rgba(255,255,255,.03)}
+.sa-table .mini{display:flex;align-items:center;gap:10px}
+.sa-table .st-icon{width:34px;height:34px;font-size:16px;border-radius:9px}
+.file-drop{border:1.5px dashed var(--stroke-2);border-radius:12px;padding:14px;text-align:center;
+  color:var(--muted);font-size:12.5px;cursor:pointer;transition:.18s;background:rgba(0,0,0,.18)}
+.file-drop:hover,.file-drop.has{border-color:var(--acc2);color:var(--txt)}
+.file-drop input{display:none}
+@media (max-width:720px){.st-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+  .sp-head .st-icon{width:64px;height:64px;font-size:30px}}

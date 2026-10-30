@@ -35,9 +35,11 @@
     <a href="{{ url_for('history') }}"    data-tab="history">🗂 История</a>
     <a href="{{ url_for('monitor') }}"    data-tab="monitor">📡 Мониторинг</a>
     <a href="{{ url_for('tools') }}"      data-tab="tools">🧰 Инструменты</a>
+    <a href="{{ url_for('store') }}"      data-tab="store">🛍 Магазин</a>
     <a href="{{ url_for('assistant') }}"  data-tab="assistant">🤖 Ассистент</a>
     <a href="{{ url_for('settings') }}"   data-tab="settings">⚙ Настройки</a>
     <a href="{{ url_for('about') }}"      data-tab="about">ℹ О проекте</a>
+    {% if is_admin_flag or session.get('store_admin') %}<a href="{{ url_for('store_admin') }}" data-tab="store-admin">🛡 Админ-панель</a>{% endif %}
   </div>
   <div class="topnav-right">
     <div class="status-pill" id="netStatus"><span class="dot on"></span><span id="netStatusTxt">онлайн</span></div>

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Магазин приложений — NetPulse{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/store.css') }}">
+<div class="store-wrap">
+
+  <div class="st-search">
+    <div class="box">
+      <span class="ic">🔎</span>
+      <input id="stQ" placeholder="Поиск приложений, издателей и описаний…" autocomplete="off">
+    </div>
+    {% if is_admin_flag %}
+      <a class="btn sm primary" href="/store-admin">🛡 Админ-панель</a>
+    {% elif not admin_enabled %}
+      <a class="btn sm ghost" href="/admin_streaker" title="Активировать права администратора">🔑 Права админа</a>
+    {% endif %}
+  </div>
+
+  <div class="st-cats" id="stCats">
+    <button class="st-chip on" data-cat="all">Все</button>
+    {% for c in cats %}
+      <button class="st-chip" data-cat="{{ c.name }}">{{ c.emoji }} {{ c.name }}</button>
+    {% endfor %}
+  </div>
+
+  <div id="stFeaturedWrap" hidden>
+    <div class="st-h"><h2>✨ Рекомендованные</h2><div class="spacer"></div></div>
+    <div class="st-hero" id="stFeatured"></div>
+  </div>
+
+  <div class="st-h">
+    <h2 id="stListTitle">📦 Все приложения</h2>
+    <div class="spacer"></div>
+    <div class="st-sort" id="stSort">
+      <button data-sort="popular" class="on">Популярные</button>
+      <button data-sort="new">Новые</button>
+      <button data-sort="rating">По рейтингу</button>
+      <button data-sort="name">А–Я</button>
+    </div>
+  </div>
+  <div class="st-grid" id="stGrid"></div>
+  <div class="st-empty" id="stEmpty" hidden>
+    <div class="big">🗂</div>
+    <div>Ничего не найдено.<br><small>Попробуйте другой запрос или категорию.</small></div>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>window.STORE_SEED = {{ apps|tojson }};</script>
+<script src="{{ url_for('static', filename='js/store.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Админ-панель магазина — NetPulse{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/store.css') }}">
+<div class="store-wrap">
+  <div class="st-h"><h2>🛡 Админ-панель магазина приложений</h2><div class="spacer"></div>
+    <a class="btn sm ghost" href="/store">🛍 Открыть магазин</a>
+    <a class="btn sm ghost" href="/admin_streaker">🔑 Права</a></div>
+
+  <div class="sa-tabs" id="saTabs">
+    <button class="sa-tab on" data-p="upload">⬆ Загрузить приложение</button>
+    <button class="sa-tab" data-p="apps">📦 Приложения ({{ apps|length }})</button>
+    <button class="sa-tab" data-p="cats">🗂 Категории ({{ cats|length }})</button>
+    <button class="sa-tab" data-p="admins">👑 Администраторы ({{ admins|length }})</button>
+  </div>
+
+  <!-- ЗАГРУЗКА -->
+  <section class="card glass sa-panel" id="p-upload">
+    <div class="card-h"><h3>Новое приложение</h3><span class="tag">макс. {{ max_mb }} МБ</span></div>
+    <form id="upForm" enctype="multipart/form-data">
+      <div class="sa-form">
+        <label class="fld">Название *<input class="inp" name="title" required maxlength="120" placeholder="My App"></label>
+        <label class="fld">Издатель<input class="inp" name="publisher" maxlength="80" placeholder="NetPulse Studio"></label>
+        <label class="fld">Версия<input class="inp" name="version" value="1.0" maxlength="30"></label>
+        <label class="fld">Категория
+          <select class="sel" name="category_id">
+            <option value="">— без категории —</option>
+            {% for c in cats %}<option value="{{ c.id }}">{{ c.emoji }} {{ c.name }}</option>{% endfor %}
+          </select></label>
+        <label class="fld full">Краткое описание (витрина)<input class="inp" name="tagline" maxlength="200" placeholder="Одно предложение о приложении"></label>
+        <label class="fld full">Полное описание<textarea class="inp" name="description" rows="4" maxlength="5000" placeholder="Что умеет приложение…"></textarea></label>
+        <label class="fld full">Файл приложения *
+          <div class="file-drop" id="fdFile">📎 Нажмите, чтобы выбрать файл (.exe, .apk, .zip, …)
+            <input type="file" name="file" id="inFile" required></div></label>
+        <label class="fld full">Иконка (png/jpg/svg, необязательно)
+          <div class="file-drop" id="fdIcon">🖼 Выбрать иконку
+            <input type="file" name="icon" id="inIcon" accept="image/*"></div></label>
+        <label class="fld" style="flex-direction:row;align-items:center;gap:8px;color:var(--txt);font-size:13px">
+          <input type="checkbox" name="featured" value="1"> ⭐ Рекомендованное (крупная карточка)</label>
+        <div class="fld"><button class="btn primary" type="submit" id="upBtn">⬆ Загрузить в магазин</button></div>
+      </div>
+    </form>
+  </section>
+
+  <!-- ПРИЛОЖЕНИЯ -->
+  <section class="card glass sa-panel" id="p-apps" hidden>
+    <div class="card-h"><h3>Все приложения</h3></div>
+    <div style="overflow-x:auto">
+    <table class="sa-table">
+      <thead><tr><th>Приложение</th><th>Категория</th><th>Рейтинг</th><th>Скачиваний</th><th>Размер</th><th>Статус</th><th></th></tr></thead>
+      <tbody id="appsRows">
+        {% for a in apps %}
+        <tr data-id="{{ a.id }}">
+          <td><div class="mini">{% if a.icon_path %}<div class="st-icon"><img src="{{ a.icon_path }}" alt=""></div>
+            {% else %}<div class="st-icon">{{ a.category_emoji or '📦' }}</div>{% endif %}
+            <div><b>{{ a.title }}</b><div style="font-size:11px;color:var(--muted)">{{ a.publisher }} · v{{ a.version }}</div></div></div></td>
+          <td>{{ a.category_name or '—' }}</td>
+          <td>{% if a.votes %}★ {{ '%.1f'|format(a.rating) }} ({{ a.votes }}){% else %}—{% endif %}</td>
+          <td>{{ a.downloads }}</td>
+          <td>{{ a.size_h }}</td>
+          <td>{% if a.featured %}<span class="badge good">⭐ реком.</span>{% endif %}
+              {% if not a.filename %}<span class="badge bad">нет файла</span>{% endif %}</td>
+          <td style="white-space:nowrap">
+            <button class="btn sm ghost" data-act="edit">✏</button>
+            <button class="btn sm ghost" data-act="file">📦</button>
+            <button class="btn sm danger" data-act="del">🗑</button></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" style="color:var(--muted)">Пока пусто — загрузите первое приложение.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+
+    <!-- форма редактирования -->
+    <div class="glass" id="editBox" style="margin-top:16px;padding:18px;border-radius:14px" hidden>
+      <div class="card-h"><h3>Редактирование: <span id="edTitle"></span></h3></div>
+      <div class="sa-form">
+        <label class="fld">Название<input class="inp" id="edName"></label>
+        <label class="fld">Издатель<input class="inp" id="edPub"></label>
+        <label class="fld">Версия<input class="inp" id="edVer"></label>
+        <label class="fld">Категория<select class="sel" id="edCat">
+            <option value="">— без категории —</option>
+            {% for c in cats %}<option value="{{ c.id }}">{{ c.emoji }} {{ c.name }}</option>{% endfor %}
+          </select></label>
+        <label class="fld full">Краткое описание<input class="inp" id="edTag"></label>
+        <label class="fld full">Полное описание<textarea class="inp" id="edDesc" rows="4"></textarea></label>
+        <label class="fld" style="flex-direction:row;align-items:center;gap:8px;color:var(--txt);font-size:13px">
+          <input type="checkbox" id="edFeat"> ⭐ Рекомендованное</label>
+        <div class="fld" style="flex-direction:row;gap:8px;display:flex">
+          <button class="btn sm primary" id="edSave">💾 Сохранить</button>
+          <button class="btn sm ghost" id="edCancel">Отмена</button></div>
+      </div>
+    </div>
+
+    <!-- замена файла -->
+    <div class="glass" id="fileBox" style="margin-top:12px;padding:16px;border-radius:14px" hidden>
+      <div class="card-h"><h3>Заменить файл: <span id="fbTitle"></span></h3></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input type="file" id="fbFile" class="inp" style="flex:1">
+        <button class="btn sm primary" id="fbSend">📦 Загрузить новый файл</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- КАТЕГОРИИ -->
+  <section class="card glass sa-panel" id="p-cats" hidden>
+    <div class="card-h"><h3>Категории магазина</h3></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <input class="inp" id="catName" placeholder="Название категории" maxlength="60" style="max-width:260px">
+      <input class="inp" id="catEmoji" placeholder="🎮" maxlength="4" style="max-width:80px;text-align:center">
+      <button class="btn sm primary" id="catAdd">➕ Добавить</button>
+    </div>
+    <table class="sa-table"><thead><tr><th>Эмодзи</th><th>Название</th><th></th></tr></thead>
+      <tbody id="catsRows">
+        {% for c in cats %}
+        <tr data-id="{{ c.id }}" data-name="{{ c.name }}" data-emoji="{{ c.emoji }}">
+          <td style="font-size:18px">{{ c.emoji }}</td><td>{{ c.name }}</td>
+          <td style="white-space:nowrap;text-align:right">
+            <button class="btn sm ghost" data-act="rename">✏</button>
+            <button class="btn sm danger" data-act="del">🗑</button></td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+  </section>
+
+  <!-- АДМИНИСТРАТОРЫ -->
+  <section class="card glass sa-panel" id="p-admins" hidden>
+    <div class="card-h"><h3>Администраторы магазина</h3></div>
+    <p style="color:var(--muted);font-size:12px;margin-bottom:12px">
+      Выдать права можно пользователю, который хотя бы раз входил в систему.
+      Также любой пользователь может открыть себе права паролем на странице <a href="/admin_streaker" style="color:var(--acc2)">/admin_streaker</a>.</p>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <input class="inp" id="admEmail" placeholder="email пользователя" style="max-width:300px">
+      <button class="btn sm primary" id="admAdd">👑 Выдать права</button>
+    </div>
+    <table class="sa-table"><thead><tr><th>Имя</th><th>Email</th><th>С даты</th><th></th></tr></thead>
+      <tbody id="admRows">
+        {% for m in admins %}
+        <tr data-id="{{ m.id }}" data-email="{{ m.user_email }}">
+          <td>{{ m.user_name or '—' }}</td><td>{{ m.user_email }}</td><td>{{ m.created_at[:10] }}</td>
+          <td style="text-align:right"><button class="btn sm danger" data-act="revoke">Отозвать</button></td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>window.SA_DATA = {apps: {{ apps|tojson }}, cats: {{ cats|tojson }}};</script>
+<script src="{{ url_for('static', filename='js/store_admin.js') }}"></script>
+{% endblock %}

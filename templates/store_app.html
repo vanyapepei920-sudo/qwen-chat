@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}{{ app.title }} — Магазин{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/store.css') }}">
+<div class="store-wrap">
+  <a href="/store" style="color:var(--muted);font-size:13px;text-decoration:none">← Назад в магазин</a>
+
+  <div class="sp-head" style="margin-top:14px">
+    {% if app.icon_path %}<div class="st-icon"><img src="{{ app.icon_path }}" alt=""></div>
+    {% else %}<div class="st-icon">{{ app.category_emoji or '📦' }}</div>{% endif %}
+    <div class="sp-title" style="flex:1;min-width:220px">
+      <h1>{{ app.title }}</h1>
+      <div class="pub">{{ app.publisher or 'Неизвестный издатель' }}
+        {% if app.category_name %} · {{ app.category_emoji }} {{ app.category_name }}{% endif %}</div>
+      {% if app.tagline %}<div class="pub" style="margin-top:6px;color:#c9cfe6">{{ app.tagline }}</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="sp-meta">
+    <div><b>{{ '%.1f'|format(app.rating) if app.votes else '—' }}</b>Рейтинг ({{ app.votes }})</div>
+    <div><b>⬇ {{ app.downloads }}</b>Скачиваний</div>
+    <div><b>{{ app.size_h }}</b>Размер</div>
+    <div><b>v{{ app.version }}</b>Версия</div>
+    <div><b>{{ app.created_at[:10] if app.created_at else '—' }}</b>Дата выхода</div>
+  </div>
+
+  <div class="sp-actions">
+    {% if app.filename %}
+      <button class="btn primary get" id="dlBtn" data-id="{{ app.id }}">⬇ Скачать ({% if app.size_h %}{{ app.size_h }}{% endif %})</button>
+    {% else %}
+      <button class="btn get" disabled>Файл недоступен</button>
+    {% endif %}
+    {% if is_admin_flag %}<a class="btn ghost" href="/store-admin">✏ Редактировать в админ-панели</a>{% endif %}
+  </div>
+
+  <section class="card glass" style="margin-top:18px">
+    <div class="card-h"><h3>Об этом приложении</h3></div>
+    <div class="sp-desc">{{ app.description or 'Описание не добавлено.' }}</div>
+  </section>
+
+  <section class="card glass" style="margin-top:16px">
+    <div class="card-h"><h3>⭐ Оценки и отзывы</h3></div>
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:6px">Ваша оценка:</div>
+      <div class="star-pick" id="starPick">
+        {% for i in range(1,6) %}<span data-s="{{ i }}" class="{{ 'on' if my_review and my_review.stars>=i }}">★</span>{% endfor %}
+      </div>
+      <textarea class="inp" id="revText" rows="3" style="width:100%;margin-top:10px"
+        placeholder="Поделитесь мнением о приложении (необязательно)…">{{ my_review.text if my_review else '' }}</textarea>
+      <button class="btn sm primary" id="revSend" style="margin-top:8px">
+        {{ 'Обновить отзыв' if my_review else 'Отправить отзыв' }}</button>
+    </div>
+
+    <div id="revList">
+      {% if reviews %}
+        {% for r in reviews %}
+        <div class="rev">
+          <div class="av">{% if r.upic %}<img src="{{ r.upic }}" referrerpolicy="no-referrer" alt="">{% else %}👤{% endif %}</div>
+          <div style="min-width:0">
+            <div class="who">{{ r.uname or 'Пользователь' }} <span class="when">· {{ r.created_at[:10] }}</span></div>
+            <div class="stars">{% for i in range(1,6) %}<span class="{{ '' if i<=r.stars else 'dim' }}">★</span>{% endfor %}</div>
+            {% if r.text %}<div class="txt">{{ r.text }}</div>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <small style="opacity:.6">Отзывов пока нет — будьте первым!</small>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  let stars={{ my_review.stars if my_review else 0 }};
+  const pick=$('#starPick');
+  function paint(){[...pick.children].forEach((el,i)=>el.classList.toggle('on',i<stars));}
+  pick.addEventListener('click',e=>{const s=e.target.dataset.s;if(!s)return;stars=+s;paint();});
+  pick.addEventListener('mouseover',e=>{const s=e.target.dataset.s;if(!s)return;
+    [...pick.children].forEach((el,i)=>el.classList.toggle('on',i<+s));});
+  pick.addEventListener('mouseleave',paint);
+
+  $('#dlBtn')&&($('#dlBtn').onclick=async function(){
+    this.disabled=true;this.textContent='⬇ Скачивание…';
+    try{
+      const r=await fetch('/api/store/apps/'+this.dataset.id+'/download',{method:'POST',credentials:'include'});
+      if(!r.ok)throw new Error('Ошибка скачивания');
+      const blob=await r.blob();
+      const cd=r.headers.get('Content-Disposition')||'';let name='download';
+      const m=cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);if(m)name=decodeURIComponent(m[1].replace(/"/g,''));
+      const url=URL.createObjectURL(blob),a=document.createElement('a');
+      a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),4000);
+      toast('Файл «'+name+'» скачан','ok');
+    }catch(e){toast(e.message,'err');}
+    this.disabled=false;this.innerHTML='⬇ Скачать';
+    fetch('/api/store/apps/'+this.dataset.id,{credentials:'include'}).then(r=>r.json())
+      .then(j=>{if(j.ok)location.reload();}).catch(()=>{});
+  });
+
+  $('#revSend').onclick=async()=>{
+    if(!stars){toast('Поставьте оценку (звёздочки)','warn');return;}
+    const r=await fetch('/api/store/reviews',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({app_id:{{ app.id }},stars,text:$('#revText').value.trim()})});
+    const j=await r.json();
+    if(j.ok){toast('Отзыв сохранён','ok');setTimeout(()=>location.reload(),600);}
+    else toast('Ошибка: '+(j.error||'?'),'err');
+  };
+})();
+</script>
+{% endblock %}

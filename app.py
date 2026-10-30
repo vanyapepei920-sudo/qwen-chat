@@ -9,7 +9,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from flask import (Flask, render_template, request, jsonify, session,
-                   g, redirect, url_for, Response, make_response)
+                   g, redirect, url_for, Response, make_response, send_file)
 from flask_cors import CORS
 
 try:
@@ -45,7 +45,8 @@ HOST                  = os.getenv("HOST", "127.0.0.1")
 PORT                  = int(os.getenv("PORT", "5000"))
 
 for d in ["assets/css","assets/img","assets/js","assets/sounds",
-          "cache","data","instance","logs","templates"]:
+          "cache","data","instance","logs","templates",
+          "uploads/apps","uploads/icons"]:
     (BASE_DIR / d).mkdir(parents=True, exist_ok=True)
 
 DB_PATH   = BASE_DIR / "instance" / "netpulse.db"
@@ -127,6 +128,24 @@ def init_db():
         ts INTEGER NOT NULL, role TEXT, text TEXT);
     CREATE TABLE IF NOT EXISTS key_usage(
         id INTEGER PRIMARY KEY AUTOINCREMENT, key_id INTEGER NOT NULL, ts INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS app_categories(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
+        emoji TEXT DEFAULT '📦', created_at TEXT);
+    CREATE TABLE IF NOT EXISTS store_apps(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, publisher TEXT DEFAULT '',
+        description TEXT DEFAULT '', tagline TEXT DEFAULT '', version TEXT DEFAULT '1.0',
+        category_id INTEGER, filename TEXT DEFAULT '', orig_name TEXT DEFAULT '',
+        icon_path TEXT DEFAULT '', size INTEGER DEFAULT 0, downloads INTEGER DEFAULT 0,
+        rating REAL DEFAULT 0, votes INTEGER DEFAULT 0, featured INTEGER DEFAULT 0,
+        created_at TEXT, updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS store_admins(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_sub TEXT UNIQUE NOT NULL,
+        user_email TEXT DEFAULT '', user_name TEXT DEFAULT '', created_at TEXT);
+    CREATE TABLE IF NOT EXISTS app_reviews(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, app_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+        stars INTEGER NOT NULL, text TEXT DEFAULT '', created_at TEXT,
+        UNIQUE(app_id, user_id));
+    CREATE INDEX IF NOT EXISTS idx_reviews_app ON app_reviews(app_id);
     CREATE INDEX IF NOT EXISTS idx_tests_user ON tests(user_id, ts DESC);
     CREATE INDEX IF NOT EXISTS idx_res_monitor ON monitor_results(monitor_id, ts DESC);
     CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, ts DESC);
@@ -146,6 +165,7 @@ def init_db():
         if col not in cols:
             db.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
     db.commit(); db.close()
+    _settings_init()
     log.info("БД готова: %s", DB_PATH)
 
 # ---------------- Google ----------------
@@ -201,6 +221,99 @@ def login_required_html(fn):
         return fn(*a, **k)
     return w
 
+# ---------------- Магазин приложений: права администратора ----------------
+STORE_DIR  = BASE_DIR / "uploads"
+MAX_APP_MB = int(os.getenv("MAX_APP_SIZE_MB", "300"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_APP_MB * 1024 * 1024
+
+def _hash_pwd(p): return hashlib.sha256(("np-store::" + p).encode("utf-8")).hexdigest()
+
+def store_admin_password():
+    """Пароль активации админки: ADMIN_PASSWORD из .env либо хеш в settings."""
+    envp = os.environ.get("ADMIN_PASSWORD") or ""
+    if envp: return envp
+    try:
+        r = get_db().execute("SELECT value FROM settings WHERE key='admin_pass_hash'").fetchone()
+        return ("__hashed__:" + r["value"]) if r else None
+    except Exception:
+        return None
+
+def admin_panel_enabled():
+    """Админ-панель доступна, если пароль задан (.env или активирован на странице admin_streaker)."""
+    return bool(store_admin_password())
+
+def is_admin():
+    u = session.get("user") or {}
+    if not session.get("store_admin"): return False
+    sub = u.get("sub")
+    if not sub: return False
+    try:
+        r = get_db().execute("SELECT email FROM users WHERE sub=?", (sub,)).fetchone()
+        email = (r["email"] if r else "") or ""
+        rows = get_db().execute("SELECT user_email FROM store_admins WHERE user_sub=?", (sub,)).fetchall()
+    except Exception:
+        return False
+    return any((a["user_email"] or "").lower() == email.lower() for a in rows)
+
+def admin_required(fn):
+    @wraps(fn)
+    def w(*a, **k):
+        if not session.get("user"):
+            return jsonify(ok=False, error="not_authenticated"), 401
+        if not is_admin():
+            return jsonify(ok=False, error="not_admin"), 403
+        return fn(*a, **k)
+    return w
+
+def admin_required_html(fn):
+    @wraps(fn)
+    def w(*a, **k):
+        if not session.get("user"):
+            return redirect(url_for("login"))
+        if not is_admin():
+            return render_template("403.html", user=session["user"], page="store-admin"), 403
+        return fn(*a, **k)
+    return w
+
+def _settings_init():
+    db = sqlite3.connect(DB_PATH)
+    db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)")
+    db.commit(); db.close()
+
+def _seed_categories():
+    try:
+        db = get_db()
+        if not db.execute("SELECT 1 FROM app_categories LIMIT 1").fetchone():
+            now = datetime.now().isoformat(timespec="seconds")
+            for nm, em in [("Игры","🎮"), ("Приложения","📦"), ("Инструменты","🛠️"),
+                           ("Развлечения","🎬"), ("Общение","💬"), ("Работа","💼")]:
+                db.execute("INSERT INTO app_categories(name,emoji,created_at) VALUES(?,?,?)", (nm, em, now))
+            db.commit()
+    except Exception as e:
+        log.warning("seed categories: %s", e)
+
+def _safe_name(fn):
+    """Оставляет только безопасные символы в имени файла."""
+    fn = re.sub(r"[^\w.\-]+", "_", os.path.basename(fn or ""), flags=re.U)
+    return fn[:120] or "file.bin"
+
+def _fmt_size(n):
+    n = float(n or 0)
+    for unit in ["Б", "КБ", "МБ", "ГБ"]:
+        if n < 1024: return f"{n:.0f} {unit}" if unit == "Б" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} ТБ"
+
+def _recalc_rating(db, app_id):
+    r = db.execute("SELECT AVG(stars) a, COUNT(*) c FROM app_reviews WHERE app_id=?", (app_id,)).fetchone()
+    db.execute("UPDATE store_apps SET rating=COALESCE(?,0), votes=? WHERE id=?",
+               (round(r["a"], 2) if r["a"] else 0, r["c"], app_id))
+
+def _app_row_to_dict(r):
+    d = dict(r)
+    d["size_h"] = _fmt_size(d.get("size"))
+    return d
+
 # ---------------- страницы ----------------
 @app.route("/")
 def root():
@@ -228,6 +341,60 @@ for _name in PAGES:
         return view
     app.add_url_rule("/"+_name, _name, _mk(_name))
 
+# ---------------- Магазин приложений (страницы) ----------------
+@app.route("/store")
+@login_required_html
+def store():
+    db = get_db()
+    cats = [dict(r) for r in db.execute("SELECT * FROM app_categories ORDER BY name").fetchall()]
+    apps = [_app_row_to_dict(r) for r in db.execute(
+        """SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
+           FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
+           ORDER BY a.featured DESC, a.downloads DESC, a.created_at DESC""").fetchall()]
+    return render_template("store.html", user=session["user"], page="store",
+                           cats=cats, apps=apps, is_admin_flag=is_admin(),
+                           admin_enabled=admin_panel_enabled())
+
+@app.route("/store/app/<int:aid>")
+@login_required_html
+def store_app(aid):
+    db = get_db()
+    r = db.execute("""SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
+                      FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
+                      WHERE a.id=?""", (aid,)).fetchone()
+    if not r: return _json_err_page(404)
+    reviews = [dict(x) for x in db.execute(
+        """SELECT rv.*, u.name AS uname, u.picture AS upic FROM app_reviews rv
+           LEFT JOIN users u ON u.id=rv.user_id WHERE rv.app_id=? ORDER BY rv.created_at DESC""",
+        (aid,)).fetchall()]
+    my = None
+    uid = (session["user"] or {}).get("db_id")
+    if uid:
+        m = db.execute("SELECT stars, text FROM app_reviews WHERE app_id=? AND user_id=?", (aid, uid)).fetchone()
+        my = dict(m) if m else None
+    return render_template("store_app.html", user=session["user"], page="store",
+                           app=_app_row_to_dict(r), reviews=reviews, my_review=my,
+                           is_admin_flag=is_admin())
+
+@app.route("/admin_streaker")
+@login_required_html
+def admin_streaker():
+    """Страница активации прав администратора магазина."""
+    return render_template("admin_streaker.html", user=session["user"], page="admin_streaker",
+                           enabled=admin_panel_enabled(), already=is_admin())
+
+@app.route("/store-admin")
+@admin_required_html
+def store_admin():
+    db = get_db()
+    cats = [dict(r) for r in db.execute("SELECT * FROM app_categories ORDER BY name").fetchall()]
+    apps = [_app_row_to_dict(r) for r in db.execute(
+        """SELECT a.*, c.name AS category_name FROM store_apps a
+           LEFT JOIN app_categories c ON c.id=a.category_id ORDER BY a.created_at DESC""").fetchall()]
+    admins = [dict(r) for r in db.execute("SELECT * FROM store_admins ORDER BY created_at").fetchall()]
+    return render_template("store_admin.html", user=session["user"], page="store-admin",
+                           cats=cats, apps=apps, admins=admins, max_mb=MAX_APP_MB)
+
 @app.route("/about")
 @login_required_html
 def about():
@@ -252,6 +419,16 @@ def me():
     u = session.get("user")
     if not u: return jsonify(ok=False, error="not_authenticated"), 401
     return jsonify(ok=True, user=u)
+
+@app.route("/api/auth/demo", methods=["POST"])
+def auth_demo():
+    """Демо-вход (для тестирования без Google OAuth): создаёт/возвращает гостевой аккаунт."""
+    if not genv("DEMO_LOGIN", "True").lower() in ("1","true","yes"):
+        return jsonify(ok=False, error="disabled"), 403
+    p = _upsert_user({"name":"Гость Демо","email":"demo@netpulse.app","picture":"",
+                      "sub":"demo","db_id":0,"registered":False})
+    session.permanent = True; session["user"] = p
+    return jsonify(ok=True, user=p)
 
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():
@@ -2130,6 +2307,289 @@ def openapi_ping(host):
     except Exception as e:
         return jsonify(ok=False, host=host, error=str(e)[:200])
 
+# ================= Магазин приложений: API =================
+@app.route("/api/store/activate", methods=["POST"])
+@login_required
+def store_activate():
+    """Активация прав администратора по паролю (страница /admin_streaker)."""
+    d = request.get_json(silent=True) or {}
+    pwd = str(d.get("password") or "")
+    stored = store_admin_password()
+    first_time = False
+    if not stored:
+        # пароль ещё не задан: первый ввод задаёт его (хранится только хеш)
+        if len(pwd) < 4:
+            return jsonify(ok=False, error="too_short"), 400
+        get_db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('admin_pass_hash',?)",
+                         (_hash_pwd(pwd),))
+        get_db().commit()
+        stored = "__hashed__:" + _hash_pwd(pwd)
+        first_time = True
+    ok = (pwd == stored) if not stored.startswith("__hashed__:") \
+         else (_hash_pwd(pwd) == stored.split(":", 1)[1])
+    if not ok:
+        time.sleep(0.6)  # замедляем перебор паролей
+        return jsonify(ok=False, error="wrong_password"), 403
+    u = session["user"]
+    now = datetime.now().isoformat(timespec="seconds")
+    db = get_db()
+    db.execute("""INSERT INTO store_admins(user_sub,user_email,user_name,created_at)
+                  VALUES(?,?,?,?)
+                  ON CONFLICT(user_sub) DO UPDATE SET user_email=excluded.user_email,
+                  user_name=excluded.user_name""",
+               (u.get("sub"), u.get("email") or "", u.get("name") or "", now))
+    db.commit()
+    session["store_admin"] = True
+    log.info("Admin activated for %s%s", u.get("email") or u.get("sub"),
+              " (first-time setup)" if first_time else "")
+    return jsonify(ok=True, redirect="/store-admin", first_time=first_time)
+
+@app.route("/api/store/deactivate", methods=["POST"])
+@login_required
+def store_deactivate():
+    session.pop("store_admin", None)
+    return jsonify(ok=True)
+
+@app.route("/api/store/categories", methods=["GET"])
+def store_cats_list():
+    try:
+        rows = get_db().execute("SELECT * FROM app_categories ORDER BY name").fetchall()
+    except Exception:
+        rows = []
+    return jsonify(ok=True, items=[dict(r) for r in rows])
+
+@app.route("/api/store/categories", methods=["POST"])
+@admin_required
+def store_cats_add():
+    d = request.get_json(silent=True) or {}
+    name = str(d.get("name") or "").strip()[:60]
+    emoji = str(d.get("emoji") or "📦").strip()[:8]
+    if not name: return jsonify(ok=False, error="empty_name"), 400
+    db = get_db()
+    try:
+        cur = db.execute("INSERT INTO app_categories(name,emoji,created_at) VALUES(?,?,?)",
+                         (name, emoji, datetime.now().isoformat(timespec="seconds")))
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify(ok=False, error="already_exists"), 409
+    return jsonify(ok=True, id=cur.lastrowid)
+
+@app.route("/api/store/categories/<int:cid>", methods=["PUT"])
+@admin_required
+def store_cats_upd(cid):
+    d = request.get_json(silent=True) or {}
+    name = str(d.get("name") or "").strip()[:60]
+    emoji = str(d.get("emoji") or "📦").strip()[:8]
+    if not name: return jsonify(ok=False, error="empty_name"), 400
+    db = get_db()
+    try:
+        db.execute("UPDATE app_categories SET name=?, emoji=? WHERE id=?", (name, emoji, cid))
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify(ok=False, error="already_exists"), 409
+    return jsonify(ok=True)
+
+@app.route("/api/store/categories/<int:cid>", methods=["DELETE"])
+@admin_required
+def store_cats_del(cid):
+    db = get_db()
+    db.execute("UPDATE store_apps SET category_id=NULL WHERE category_id=?", (cid,))
+    db.execute("DELETE FROM app_categories WHERE id=?", (cid,))
+    db.commit()
+    return jsonify(ok=True)
+
+@app.route("/api/store/apps")
+@login_required
+def store_apps_list():
+    q  = (request.args.get("q") or "").strip().lower()
+    cat = request.args.get("category") or ""
+    sort = request.args.get("sort") or "popular"
+    order = {"popular": "a.downloads DESC", "new": "a.created_at DESC",
+             "rating": "a.rating DESC, a.votes DESC", "name": "LOWER(a.title) ASC"}.get(sort, "a.downloads DESC")
+    sql = """SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
+             FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id WHERE 1=1"""
+    args = []
+    if cat and cat != "all":
+        if cat == "none": sql += " AND a.category_id IS NULL"
+        else: sql += " AND c.name=?"; args.append(cat)
+    if q:
+        sql += " AND (LOWER(a.title) LIKE ? OR LOWER(a.publisher) LIKE ? OR LOWER(a.description) LIKE ?)"
+        args += [f"%{q}%"] * 3
+    sql += f" ORDER BY a.featured DESC, {order}"
+    try:
+        rows = get_db().execute(sql, args).fetchall()
+    except Exception:
+        rows = []
+    return jsonify(ok=True, items=[_app_row_to_dict(r) for r in rows])
+
+@app.route("/api/store/apps/<int:aid>")
+@login_required
+def store_app_get(aid):
+    r = get_db().execute("""SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
+                            FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
+                            WHERE a.id=?""", (aid,)).fetchone()
+    if not r: return jsonify(ok=False, error="not_found"), 404
+    return jsonify(ok=True, app=_app_row_to_dict(r))
+
+@app.route("/api/store/apps/<int:aid>/download", methods=["POST"])
+@login_required
+def store_app_download(aid):
+    db = get_db()
+    r = db.execute("SELECT * FROM store_apps WHERE id=?", (aid,)).fetchone()
+    if not r: return jsonify(ok=False, error="not_found"), 404
+    if not r["filename"]: return jsonify(ok=False, error="no_file"), 404
+    p = STORE_DIR / "apps" / r["filename"]
+    if not p.is_file(): return jsonify(ok=False, error="file_missing"), 404
+    db.execute("UPDATE store_apps SET downloads=downloads+1 WHERE id=?", (aid,)); db.commit()
+    return send_file(p, as_attachment=True, download_name=r["orig_name"] or p.name)
+
+@app.route("/api/store/reviews", methods=["POST"])
+@login_required
+def store_review_add():
+    d = request.get_json(silent=True) or {}
+    aid = int(d.get("app_id") or 0)
+    try: stars = max(1, min(5, int(d.get("stars") or 0)))
+    except Exception: return jsonify(ok=False, error="bad_stars"), 400
+    text = str(d.get("text") or "").strip()[:1000]
+    uid = session["user"]["db_id"]; now = datetime.now().isoformat(timespec="seconds")
+    db = get_db()
+    if not db.execute("SELECT 1 FROM store_apps WHERE id=?", (aid,)).fetchone():
+        return jsonify(ok=False, error="not_found"), 404
+    db.execute("""INSERT INTO app_reviews(app_id,user_id,stars,text,created_at) VALUES(?,?,?,?,?)
+                  ON CONFLICT(app_id,user_id) DO UPDATE SET stars=excluded.stars, text=excluded.text""",
+               (aid, uid, stars, text, now))
+    _recalc_rating(db, aid); db.commit()
+    return jsonify(ok=True)
+
+@app.route("/api/store/admin/apps", methods=["POST"])
+@admin_required
+def store_admin_upload():
+    title = (request.form.get("title") or "").strip()[:120]
+    if not title: return jsonify(ok=False, error="empty_title"), 400
+    f = request.files.get("file")
+    if not f or not f.filename: return jsonify(ok=False, error="no_file"), 400
+    safe = f"{uuid.uuid4().hex[:10]}_{_safe_name(f.filename)}"
+    dest = STORE_DIR / "apps" / safe
+    f.save(dest)
+    size = dest.stat().st_size
+    icon_path = ""
+    fi = request.files.get("icon")
+    if fi and fi.filename:
+        ext = os.path.splitext(fi.filename)[1].lower()
+        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico"):
+            icon_path = "/assets/img/icons/" + uuid.uuid4().hex[:10] + ext
+            fi.save(BASE_DIR / icon_path.lstrip("/"))
+    try: cid = int(request.form.get("category_id") or 0) or None
+    except Exception: cid = None
+    now = datetime.now().isoformat(timespec="seconds")
+    cur = get_db().execute(
+        """INSERT INTO store_apps(title,publisher,description,tagline,version,category_id,
+           filename,orig_name,icon_path,size,featured,created_at,updated_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (title, (request.form.get("publisher") or "").strip()[:80],
+         (request.form.get("description") or "").strip()[:5000],
+         (request.form.get("tagline") or "").strip()[:200],
+         (request.form.get("version") or "1.0").strip()[:30], cid, safe,
+         _safe_name(f.filename), icon_path, size,
+         1 if request.form.get("featured") else 0, now, now))
+    get_db().commit()
+    log.info("Store: uploaded app #%s '%s' (%s)", cur.lastrowid, title, _fmt_size(size))
+    return jsonify(ok=True, id=cur.lastrowid)
+
+@app.route("/api/store/admin/apps/<int:aid>", methods=["PUT"])
+@admin_required
+def store_admin_update(aid):
+    d = request.get_json(silent=True) or {}
+    fields, vals = [], []
+    for k in ("title", "publisher", "description", "tagline", "version"):
+        if k in d: fields.append(f"{k}=?"); vals.append(str(d[k]).strip()[:5000])
+    if "category_id" in d:
+        fields.append("category_id=?"); vals.append(int(d["category_id"] or 0) or None)
+    if "featured" in d: fields.append("featured=?"); vals.append(1 if d["featured"] else 0)
+    if not fields: return jsonify(ok=False, error="nothing_to_update"), 400
+    fields.append("updated_at=?"); vals.append(datetime.now().isoformat(timespec="seconds"))
+    db = get_db()
+    db.execute(f"UPDATE store_apps SET {', '.join(fields)} WHERE id=?", (*vals, aid))
+    # замена файла приложения
+    if d.get("clear_file"):
+        r = db.execute("SELECT filename FROM store_apps WHERE id=?", (aid,)).fetchone()
+        if r and r["filename"]:
+            try: (STORE_DIR / "apps" / r["filename"]).unlink(missing_ok=True)
+            except Exception: pass
+        db.execute("UPDATE store_apps SET filename='', orig_name='', size=0 WHERE id=?", (aid,))
+    db.commit()
+    return jsonify(ok=True)
+
+@app.route("/api/store/admin/apps/<int:aid>/file", methods=["POST"])
+@admin_required
+def store_admin_replace_file(aid):
+    db = get_db()
+    r = db.execute("SELECT * FROM store_apps WHERE id=?", (aid,)).fetchone()
+    if not r: return jsonify(ok=False, error="not_found"), 404
+    f = request.files.get("file")
+    if not f or not f.filename: return jsonify(ok=False, error="no_file"), 400
+    safe = f"{uuid.uuid4().hex[:10]}_{_safe_name(f.filename)}"
+    dest = STORE_DIR / "apps" / safe
+    f.save(dest)
+    if r["filename"]:
+        try: (STORE_DIR / "apps" / r["filename"]).unlink(missing_ok=True)
+        except Exception: pass
+    db.execute("UPDATE store_apps SET filename=?, orig_name=?, size=?, updated_at=? WHERE id=?",
+               (safe, _safe_name(f.filename), dest.stat().st_size,
+                datetime.now().isoformat(timespec="seconds"), aid))
+    db.commit()
+    return jsonify(ok=True)
+
+@app.route("/api/store/admin/apps/<int:aid>", methods=["DELETE"])
+@admin_required
+def store_admin_delete(aid):
+    db = get_db()
+    r = db.execute("SELECT * FROM store_apps WHERE id=?", (aid,)).fetchone()
+    if not r: return jsonify(ok=False, error="not_found"), 404
+    if r["filename"]:
+        try: (STORE_DIR / "apps" / r["filename"]).unlink(missing_ok=True)
+        except Exception: pass
+    if r["icon_path"]:
+        try: (BASE_DIR / r["icon_path"].lstrip("/")).unlink(missing_ok=True)
+        except Exception: pass
+    db.execute("DELETE FROM app_reviews WHERE app_id=?", (aid,))
+    db.execute("DELETE FROM store_apps WHERE id=?", (aid,))
+    db.commit()
+    return jsonify(ok=True)
+
+@app.route("/api/store/admin/admins")
+@admin_required
+def store_admin_list():
+    rows = get_db().execute("SELECT * FROM store_admins ORDER BY created_at").fetchall()
+    return jsonify(ok=True, items=[dict(r) for r in rows])
+
+@app.route("/api/store/admin/admins", methods=["POST"])
+@admin_required
+def store_admin_grant():
+    d = request.get_json(silent=True) or {}
+    email = str(d.get("email") or "").strip().lower()
+    if not email: return jsonify(ok=False, error="empty_email"), 400
+    u = get_db().execute("SELECT sub,name FROM users WHERE LOWER(email)=?", (email,)).fetchone()
+    if not u: return jsonify(ok=False, error="user_not_found"), 404
+    now = datetime.now().isoformat(timespec="seconds")
+    get_db().execute("""INSERT INTO store_admins(user_sub,user_email,user_name,created_at)
+                        VALUES(?,?,?,?) ON CONFLICT(user_sub) DO UPDATE SET user_email=excluded.user_email""",
+                     (u["sub"], email, u["name"] or "", now))
+    get_db().commit()
+    return jsonify(ok=True)
+
+@app.route("/api/store/admin/admins/<int:aid>", methods=["DELETE"])
+@admin_required
+def store_admin_revoke(aid):
+    me = (session.get("user") or {}).get("sub")
+    row = get_db().execute("SELECT user_sub FROM store_admins WHERE id=?", (aid,)).fetchone()
+    if not row: return jsonify(ok=False, error="not_found"), 404
+    if row["user_sub"] == me:
+        return jsonify(ok=False, error="cannot_revoke_self"), 400
+    get_db().execute("DELETE FROM store_admins WHERE id=?", (aid,))
+    get_db().commit()
+    return jsonify(ok=True)
+
 def _json_err_page(code):
     """Для API-запросов отдаём JSON вместо HTML-страницы ошибки (и не падаем, если шаблона нет)."""
     if request.path.startswith("/api/"):
@@ -2149,8 +2609,11 @@ def e404(_e): return _json_err_page(404)
 @app.errorhandler(500)
 def e500(_e): return _json_err_page(500)
 
+# Инициализация БД при любом старте (python app.py и gunicorn app:app)
+init_db()
+with app.app_context(): _seed_categories()
+
 if __name__ == "__main__":
-    init_db()
     log.info("NetPulse: http://%s:%s | google_auth=%s | search=%s",
              HOST, PORT, HAVE_GOOGLE_AUTH, bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX))
     app.run(host=HOST, port=PORT, debug=DEBUG)
