@@ -4,25 +4,25 @@
 <section class="as-page">
   <div class="card as-card">
     <div class="as-mark">🔐</div>
-    {% if already %}
+    {% if not user %}
+      <h1>Требуется вход</h1>
+      <p class="sub">Чтобы активировать права администратора, сначала войдите в аккаунт.</p>
+      <a class="btn primary" href="/login?next=/admin_streaker">Войти</a>
+    {% elif already %}
       <h1>Доступ уже активирован</h1>
       <p class="sub">Ваш аккаунт имеет права администратора Scuarfy Store.</p>
       <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
         <a class="btn primary" href="/store-admin">🛠 Открыть админ-панель</a>
         <button class="btn" id="deactBtn">Отключить права на этом устройстве</button>
       </div>
-    {% elif not enabled %}
-      <h1>Страница недоступна</h1>
-      <p class="sub">Активация прав администратора ещё не настроена владельцем системы.</p>
-      <a class="btn" href="/store">← В магазин</a>
     {% else %}
-      <h1>Активация прав администратора</h1>
-      <p class="sub">Введите пароль администратора, чтобы получить доступ к управлению Scuarfy Store.</p>
+      <h1>Установка пароля администратора</h1>
+      <p class="sub">Пароль для активации ещё не задан. Придумайте его сейчас — первый ввод станет постоянным паролем.</p>
       <form class="as-form" id="asForm">
-        <input class="inp" type="password" id="asPass" placeholder="Пароль" autocomplete="current-password" required>
-        <button class="btn primary" type="submit" id="asBtn">🔓 Активировать</button>
+        <input class="inp" type="password" id="asPass" placeholder="Новый пароль (мин. 4 символа)" autocomplete="new-password" minlength="4" required>
+        <button class="btn primary" type="submit" id="asBtn">🔑 Установить и активировать</button>
       </form>
-      <div class="as-hint">Первый ввод пароля задаёт его как постоянный (если пароль не задан в .env).</div>
+      <div class="as-hint">Совет: задайте <code>ADMIN_PASSWORD</code> в переменных окружения, чтобы зафиксировать пароль до первого запуска.</div>
     {% endif %}
   </div>
 </section>
@@ -44,11 +44,14 @@
     const r=await fetch('/api/store/activate',{method:'POST',credentials:'include',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({password:$('#asPass').value})});
-    const j=await r.json();
+    let j; try{ j=await r.json(); }catch(_){ j={error:'network'}; }
     if(j.ok){toast('Права администратора активированы 🎉','ok');
-      setTimeout(()=>location.href=j.redirect||'/store-admin',700);}
-    else{toast(j.error==='wrong_password'?'Неверный пароль':'Ошибка активации','err');
-      btn.disabled=false; btn.textContent='🔓 Активировать';}
+      setTimeout(()=>location.href=j.redirect||'/store-admin',700);return;}
+    btn.disabled=false; btn.textContent=$('#asBtn').dataset.label||'🔓 Активировать';
+    const msgs={wrong_password:'Неверный пароль',too_short:'Пароль должен быть не короче 4 символов',
+      not_authenticated:'Сессия истекла — войдите заново',network:'Сервер недоступен, попробуйте ещё раз'};
+    toast(msgs[j.error]||('Ошибка активации: '+(j.error||'?')),'err');
+    if(j.error==='not_authenticated') setTimeout(()=>location.href='/login?next=/admin_streaker',900);
   });
 })();
 </script>

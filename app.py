@@ -3,7 +3,7 @@ Google-вход, категории, загрузка приложений (ад
 рекомендации (по лайкам, скачиваниям и оценкам), поиск.
 Секретная страница активации прав администратора: /admin_streaker
 """
-import os, re, time, json, uuid, sqlite3, logging, secrets, hashlib, base64
+import os, sys, re, time, json, uuid, sqlite3, logging, secrets, hashlib, base64
 from pathlib import Path
 from datetime import timedelta, datetime
 from functools import wraps
@@ -29,12 +29,16 @@ def genv(name, default=""):
     return os.environ.get(name) or os.getenv(name, default) or default
 
 GOOGLE_CLIENT_ID   = genv("GOOGLE_CLIENT_ID")
-SECRET_KEY         = os.getenv("FLASK_SECRET_KEY", secrets.token_urlsafe(32))
+SECRET_KEY         = os.getenv("FLASK_SECRET_KEY") or ""
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_urlsafe(32)
+    print("[!] FLASK_SECRET_KEY не задан — сгенерирован временный ключ "
+          "(сессии сбросятся после перезапуска; задайте его в .env)", file=sys.stderr)
 DEBUG              = os.getenv("FLASK_DEBUG", "False") == "True"
 SESSION_HOURS      = int(os.getenv("SESSION_LIFETIME_HOURS", "24"))
 HOST               = os.getenv("HOST", "127.0.0.1")
 PORT               = int(os.getenv("PORT", "5000"))
-MAX_APP_MB         = int(os.getenv("MAX_APP_SIZE_MB", "300"))
+MAX_APP_MB         = int(genv("MAX_APP_SIZE_MB", "300"))
 
 for d in ["assets/css", "assets/img/icons", "assets/js", "instance", "logs",
           "templates", "uploads/apps", "uploads/icons"]:
@@ -64,8 +68,14 @@ def inject_globals():
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=SESSION_HOURS)
 app.config["MAX_CONTENT_LENGTH"] = MAX_APP_MB * 1024 * 1024
-CORS(app, supports_credentials=True,
-     origins=[f"http://{HOST}:{PORT}", "http://localhost:5000", "http://127.0.0.1:5000"])
+_cors_origins = [f"http://{HOST}:{PORT}", f"https://{HOST}:{PORT}",
+                 "http://localhost:5000", "http://127.0.0.1:5000",
+                 f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"]
+for _o in (genv("ALLOWED_ORIGINS") or "").split(","):
+    _o = _o.strip().rstrip("/")
+    if _o and _o not in _cors_origins:
+        _cors_origins.append(_o)
+CORS(app, supports_credentials=True, origins=_cors_origins)
 
 # ---------------- БД ----------------
 def get_db():
@@ -79,11 +89,11 @@ def close_db(_e):
     if db: db.close()
 
 def _gen_public_id():
-    """Публичный ID приложения: 4hex-6hex-5hex-8hex-8hex (например a3f2-9c1be4-77ab2-1f09dc34-88ae5b21)."""
+    """Публичный ID приложения: 4hex-6hex-5hex-8hex-9hex (используются все 32 hex-символа UUID)."""
     h = uuid.uuid4().hex  # 32 hex-символа
-    return f"{h[0:4]}-{h[4:10]}-{h[10:15]}-{h[15:23]}-{h[23:31]}"
+    return f"{h[0:4]}-{h[4:10]}-{h[10:15]}-{h[15:23]}-{h[23:32]}"
 
-PID_RE = re.compile(r"^[0-9a-f]{4}-[0-9a-f]{6}-[0-9a-f]{5}-[0-9a-f]{8}-[0-9a-f]{8}$")
+PID_RE = re.compile(r"^[0-9a-f]{4}-[0-9a-f]{6}-[0-9a-f]{5}-[0-9a-f]{8}-[0-9a-f]{9}$")
 
 def init_db():
     db = sqlite3.connect(DB_PATH)
@@ -184,43 +194,59 @@ _B64URL_PAD = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 def _rsa_verify_pkcs1_sha256(n: int, e: int, message: bytes, sig: bytes) -> bool:
     """Проверка подписи RSA PKCS#1 v1.5 (SHA-256) на чистом Python."""
-    if len(sig) != (n.bit_length() + 7) // 8:
+    k = (n.bit_length() + 7) // 8
+    if len(sig) != k or k < 64:
         return False
     s = pow(int.from_bytes(sig, "big"), e, n)
-    em = s.to_bytes((n.bit_length() + 7) // 8, "big")
+    em = s.to_bytes(k, "big")
     digest = hashlib.sha256(message).digest()
     # EMSA-PKCS1-v1_5: 0x00 0x01 <PS: 0xFF...> 0x00 || DigestInfo(SHA-256)
-    prefix = b"\x00\x01"
-    ff_len = len(em) - len(prefix) - 1 - len(digest) - 19
-    expected = prefix + b"\xff" * ff_len + b"\x00" + \
-        b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20" + digest
+    digest_info = (b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01"
+                   b"\x05\x00\x04\x20") + digest
+    ff_len = k - 3 - len(digest_info)
+    if ff_len < 8:
+        return False
+    expected = b"\x00\x01" + b"\xff" * ff_len + b"\x00" + digest_info
     return em == expected
 
 def _verify_google_sig_purepy(token, cid):
     """Верификация ID-токена Google без сторонних криптобиблиотек.
     Возвращает профиль либо None; бросает исключение только при сетевых сбоях."""
-    h = _B64URL_PAD(token.split(".")[0])
-    d = _B64URL_PAD(token.split(".")[1]) if len(token.split(".")) > 1 else b""
-    if json.loads(h).get("alg") != "RS256":
+    parts = token.split(".")
+    if len(parts) != 3:
+        log.warning("google verify (pure-python): некорректная структура JWT"); return None
+    try:
+        header = json.loads(_B64URL_PAD(parts[0]))
+        payload = json.loads(_B64URL_PAD(parts[1]))
+    except Exception:
+        log.warning("google verify (pure-python): не удалось декодировать JWT"); return None
+    if header.get("alg") != "RS256":
+        log.warning("google verify (pure-python): неподдерживаемый alg=%s", header.get("alg"))
         return None
-    payload = json.loads(d)
     aud = payload.get("aud")
     aud_set = {aud} if isinstance(aud, str) else set(aud or [])
     if payload.get("iss") not in ("https://accounts.google.com", "accounts.google.com"):
         log.warning("google verify (pure-python): неверный iss=%s", payload.get("iss")); return None
     if cid not in aud_set:
         log.warning("google verify (pure-python): audience=%s не совпадает с GOOGLE_CLIENT_ID", aud); return None
-    if int(payload.get("exp", 0)) < time.time():
+    try:
+        exp_ts = int(payload.get("exp", 0))
+    except (TypeError, ValueError):
+        exp_ts = 0
+    if exp_ts < time.time() - 300:  # skew ±5 минут как у google-auth
         log.warning("google verify (pure-python): срок токена истёк"); return None
-    header = json.loads(h)
     certs = _google_certs()
     jwk = certs.get(header.get("kid"))
+    if not jwk:
+        _certs_cache["ts"] = 0  # ключи могли ротироваться — сбрасываем кэш и пробуем ещё раз
+        certs = _google_certs()
+        jwk = certs.get(header.get("kid"))
     if not jwk:
         log.warning("google verify (pure-python): kid=%s не найден в JWKS", header.get("kid")); return None
     n = int.from_bytes(_B64URL_PAD(jwk["n"]), "big")
     e = int.from_bytes(_B64URL_PAD(jwk["e"]), "big")
-    signing_input = token[:token.rfind(".")].encode()
-    sig = _B64URL_PAD(token[token.rfind(".") + 1:])
+    signing_input = ".".join(parts[:2]).encode()
+    sig = _B64URL_PAD(parts[2])
     if not _rsa_verify_pkcs1_sha256(n, e, signing_input, sig):
         log.warning("google verify (pure-python): подпись не прошла проверку"); return None
     log.info("google verify: токен принят через pure-python RS256 (без cryptography/google-auth)")
@@ -337,15 +363,20 @@ def login_required_html(fn):
 # ---------------- Права администратора (admin_streaker) ----------------
 def _hash_pwd(p): return hashlib.sha256(("scuarfy-store::" + p).encode("utf-8")).hexdigest()
 
-def store_admin_password():
-    """Пароль активации админки: ADMIN_PASSWORD из .env либо хеш в settings."""
-    envp = os.environ.get("ADMIN_PASSWORD") or ""
-    if envp: return envp
+def _admin_hash_from_db():
     try:
         r = get_db().execute("SELECT value FROM settings WHERE key='admin_pass_hash'").fetchone()
-        return ("__hashed__:" + r["value"]) if r else None
+        return r["value"] if r else None
     except Exception:
         return None
+
+def store_admin_password():
+    """Пароль активации админки.
+    Приоритет — хеш, заданный первым владельцем на странице /admin_streaker;
+    если его нет — используется ADMIN_PASSWORD из .env / переменных окружения."""
+    h = _admin_hash_from_db()
+    if h: return "__hashed__:" + h
+    return os.environ.get("ADMIN_PASSWORD") or None
 
 def admin_panel_enabled():
     return bool(store_admin_password())
@@ -356,12 +387,10 @@ def is_admin():
     sub = u.get("sub")
     if not sub: return False
     try:
-        r = get_db().execute("SELECT email FROM users WHERE sub=?", (sub,)).fetchone()
-        email = (r["email"] if r else "") or ""
-        rows = get_db().execute("SELECT user_email FROM store_admins WHERE user_sub=?", (sub,)).fetchall()
+        r = get_db().execute("SELECT 1 FROM store_admins WHERE user_sub=?", (sub,)).fetchone()
     except Exception:
         return False
-    return any((a["user_email"] or "").lower() == email.lower() for a in rows)
+    return bool(r)
 
 def admin_required(fn):
     @wraps(fn)
@@ -545,10 +574,10 @@ def store_app(pid):
                            liked=bool(liked), similar=similar, is_admin_flag=is_admin())
 
 @app.route("/admin_streaker")
-@login_required_html
 def admin_streaker():
-    """Секретная страница активации прав администратора (доступна только по прямой ссылке)."""
-    return render_template("admin_streaker.html", user=session["user"], page="admin_streaker",
+    """Секретная страница активации прав администратора (доступна только по прямой ссылке).
+    Открыта без входа: при отсутствии пароля сразу показывает форму его установки."""
+    return render_template("admin_streaker.html", user=session.get("user"), page="admin_streaker",
                            enabled=admin_panel_enabled(), already=is_admin())
 
 @app.route("/store-admin")
@@ -624,16 +653,12 @@ def logout():
 def store_activate():
     d = request.get_json(silent=True) or {}
     pwd = str(d.get("password") or "")
-    stored = store_admin_password()
-    first_time = False
-    if not stored:
-        if len(pwd) < 4:
-            return jsonify(ok=False, error="too_short"), 400
-        get_db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('admin_pass_hash',?)",
-                         (_hash_pwd(pwd),))
-        get_db().commit()
+    if len(pwd) < 4:
+        return jsonify(ok=False, error="too_short"), 400
+    stored = store_admin_password()   # может отсутствовать при гонке первого запуска
+    first_time = stored is None
+    if first_time:
         stored = "__hashed__:" + _hash_pwd(pwd)
-        first_time = True
     ok = (pwd == stored) if not stored.startswith("__hashed__:") \
          else (_hash_pwd(pwd) == stored.split(":", 1)[1])
     if not ok:
@@ -641,12 +666,19 @@ def store_activate():
         return jsonify(ok=False, error="wrong_password"), 403
     u = session["user"]
     now = datetime.now().isoformat(timespec="seconds")
-    get_db().execute("""INSERT INTO store_admins(user_sub,user_email,user_name,created_at)
+    db = get_db()
+    db.execute("""INSERT INTO store_admins(user_sub,user_email,user_name,created_at)
                         VALUES(?,?,?,?)
                         ON CONFLICT(user_sub) DO UPDATE SET user_email=excluded.user_email,
                         user_name=excluded.user_name""",
                      (u.get("sub"), u.get("email") or "", u.get("name") or "", now))
-    get_db().commit()
+    # Фиксируем пароль и владельца в БД (в т.ч. когда пароль пришёл из ADMIN_PASSWORD):
+    # первый активировавший становится владельцем, и случайный гость, узнавший env-пароль,
+    # больше не сможет выдать себе права.
+    if _admin_hash_from_db() is None:
+        db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('admin_pass_hash',?)",
+                   (_hash_pwd(pwd),))
+    db.commit()
     session["store_admin"] = True
     log.info("Admin activated for %s%s", u.get("email") or u.get("sub"),
              " (first-time setup)" if first_time else "")
