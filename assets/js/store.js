@@ -26,7 +26,9 @@
       '<div class="tagline">'+esc(a.tagline||a.description||'').slice(0,140)+'</div>'+
       '<div class="meta">'+starsHTML(a.rating,a.votes)+
         '<span>⬇ '+a.downloads+'</span><span>'+esc(a.size_h||'—')+'</span></div>'+
-      '<button class="btn sm primary dl-btn" data-dl="'+a.id+'">⬇ Получить</button>'+
+      (a.filename
+        ? '<a class="btn sm primary dl-btn" href="/api/store/apps/'+a.id+'/download">⬇ Скачать</a>'
+        : '<button class="btn sm dl-btn" disabled>Нет файла</button>')+
     '</div>';
   }
   function heroHTML(a){
@@ -68,25 +70,16 @@
 
   /* события */
   document.addEventListener('click',async e=>{
-    const dl=e.target.closest('[data-dl]');
-    if(dl){e.stopPropagation();dl.disabled=true;dl.textContent='⬇ Скачивание…';
-      try{
-        const r=await fetch('/api/store/apps/'+dl.dataset.dl+'/download',{method:'POST',credentials:'include'});
-        if(!r.ok)throw new Error('Ошибка скачивания');
-        const blob=await r.blob();
-        const cd=r.headers.get('Content-Disposition')||'';
-        let name='download';const m=cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-        if(m)name=decodeURIComponent(m[1].replace(/"/g,''));
-        const url=URL.createObjectURL(blob);const a=document.createElement('a');
-        a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),4000);
-        toast('Файл «'+name+'» скачан','ok');
-      }catch(err){toast(err.message,'err');}
-      dl.disabled=false;dl.textContent='⬇ Получить';return;}
+    const dlA=e.target.closest('a.dl-btn');
+    if(dlA){e.preventDefault();e.stopPropagation();
+      const old=dlA.textContent; dlA.textContent='⬇ Скачивание…';
+      const fr=document.createElement('iframe'); fr.style.display='none'; fr.src=dlA.href;
+      document.body.appendChild(fr);
+      try{ toast('Скачивание началось','ok'); }catch(_){}
+      setTimeout(()=>{fr.remove();dlA.textContent=old;},2500);
+      return;}
     const card=e.target.closest('.app-card,.hero-card');
     if(card){location.href='/store/app/'+card.dataset.id;return;}
-    const chip=e.target.closest('.st-chip');
-    if(chip){$$('.st-chip').forEach(c=>c.classList.remove('on'));chip.classList.add('on');
-      state.cat=chip.dataset.cat;load();return;}
     const sb=e.target.closest('#stSort button');
     if(sb)$$('#stSort button').forEach(b=>{b.classList.toggle('on',b===sb);});
     if(sb){state.sort=sb.dataset.sort;load();}

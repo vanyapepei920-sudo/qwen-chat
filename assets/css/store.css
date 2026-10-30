@@ -14,8 +14,11 @@
 .st-cats{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 12px;scrollbar-width:none}
 .st-cats::-webkit-scrollbar{display:none}
 .st-chip{white-space:nowrap;padding:8px 16px;border-radius:999px;border:1px solid var(--stroke);
-  background:rgba(255,255,255,.04);color:var(--txt);font-size:13px;cursor:pointer;transition:.18s;flex:0 0 auto}
+  background:rgba(255,255,255,.04);color:var(--txt);font-size:13px;cursor:pointer;transition:.18s;flex:0 0 auto;
+  text-decoration:none;display:inline-flex;align-items:center;gap:6px}
 .st-chip:hover{background:rgba(255,255,255,.09)}
+.st-chip .cnt{font-size:11px;background:rgba(255,255,255,.12);border-radius:999px;padding:1px 8px;color:var(--muted)}
+.st-chip.on .cnt{background:rgba(255,255,255,.2);color:var(--txt)}
 .st-chip.on{background:linear-gradient(92deg,rgba(124,92,255,.35),rgba(0,229,255,.25));
   border-color:rgba(0,229,255,.5);font-weight:600}
 
@@ -61,6 +64,11 @@
   justify-content:center;font-size:22px;background:linear-gradient(135deg,var(--acc1),var(--acc2));
   color:#06101c;font-weight:800;overflow:hidden;border:1px solid rgba(255,255,255,.14)}
 .st-icon img{width:100%;height:100%;object-fit:cover}
+.st-icon.cat-ic{width:72px;height:72px;border-radius:18px;font-size:34px}
+
+/* карточка-ссылка (похожие приложения) */
+a.app-card{text-decoration:none;color:inherit}
+.sim-card .ttl{color:var(--txt)}
 
 .stars{color:#ffcf5c;font-size:11.5px;letter-spacing:1px;white-space:nowrap}
 .stars .dim{opacity:.25}

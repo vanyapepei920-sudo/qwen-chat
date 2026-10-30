@@ -17,9 +17,10 @@
   </div>
 
   <div class="st-cats" id="stCats">
-    <button class="st-chip on" data-cat="all">Все</button>
+    <a class="st-chip on" href="/store">Все</a>
     {% for c in cats %}
-      <button class="st-chip" data-cat="{{ c.name }}">{{ c.emoji }} {{ c.name }}</button>
+      <a class="st-chip" href="/store/category/{{ c.id }}">{{ c.emoji }} {{ c.name }}
+        <span class="cnt">{{ cat_counts.get(c.id, 0) }}</span></a>
     {% endfor %}
   </div>
 

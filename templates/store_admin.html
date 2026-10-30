@@ -56,7 +56,7 @@
             <div><b>{{ a.title }}</b><div style="font-size:11px;color:var(--muted)">{{ a.publisher }} · v{{ a.version }}</div></div></div></td>
           <td>{{ a.category_name or '—' }}</td>
           <td>{% if a.votes %}★ {{ '%.1f'|format(a.rating) }} ({{ a.votes }}){% else %}—{% endif %}</td>
-          <td>{{ a.downloads }}</td>
+          <td><a href="/store/app/{{ a.id }}" title="Открыть страницу приложения" style="color:var(--acc2);text-decoration:none">{{ a.downloads }}</a></td>
           <td>{{ a.size_h }}</td>
           <td>{% if a.featured %}<span class="badge good">⭐ реком.</span>{% endif %}
               {% if not a.filename %}<span class="badge bad">нет файла</span>{% endif %}</td>

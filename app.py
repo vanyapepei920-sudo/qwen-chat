@@ -314,6 +314,30 @@ def _app_row_to_dict(r):
     d["size_h"] = _fmt_size(d.get("size"))
     return d
 
+def _store_apps_query(cat_name=None, cat_id=None, q="", sort="popular", limit=None):
+    """Список приложений магазина с фильтром по категории/поиску."""
+    order = {"popular": "a.downloads DESC", "new": "a.created_at DESC",
+             "rating": "a.rating DESC, a.votes DESC", "name": "LOWER(a.title) ASC"}
+    sql = """SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
+             FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id WHERE 1=1"""
+    args = []
+    if cat_id is not None: sql += " AND c.id=?"; args.append(cat_id)
+    if cat_name:           sql += " AND c.name=?"; args.append(cat_name)
+    if q:
+        sql += " AND (LOWER(a.title) LIKE ? OR LOWER(a.publisher) LIKE ? OR LOWER(a.description) LIKE ?)"
+        args += [f"%{q.lower()}%"] * 3
+    sql += " ORDER BY a.featured DESC, " + order.get(sort, order["popular"])
+    if limit: sql += f" LIMIT {int(limit)}"
+    try:
+        rows = get_db().execute(sql, args).fetchall()
+    except Exception:
+        rows = []
+    return [_app_row_to_dict(r) for r in rows]
+
+def _get_category(cid):
+    r = get_db().execute("SELECT * FROM app_categories WHERE id=?", (cid,)).fetchone()
+    return dict(r) if r else None
+
 # ---------------- страницы ----------------
 @app.route("/")
 def root():
@@ -347,13 +371,28 @@ for _name in PAGES:
 def store():
     db = get_db()
     cats = [dict(r) for r in db.execute("SELECT * FROM app_categories ORDER BY name").fetchall()]
-    apps = [_app_row_to_dict(r) for r in db.execute(
-        """SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
-           FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
-           ORDER BY a.featured DESC, a.downloads DESC, a.created_at DESC""").fetchall()]
+    # счётчик приложений в каждой категории
+    counts = {r["cid"]: r["c"] for r in db.execute(
+        "SELECT category_id AS cid, COUNT(*) AS c FROM store_apps WHERE category_id IS NOT NULL GROUP BY category_id").fetchall()}
+    apps = _store_apps_query(sort="popular")
     return render_template("store.html", user=session["user"], page="store",
-                           cats=cats, apps=apps, is_admin_flag=is_admin(),
+                           cats=cats, cat_counts=counts, apps=apps, is_admin_flag=is_admin(),
                            admin_enabled=admin_panel_enabled())
+
+@app.route("/store/category/<int:cid>")
+@login_required_html
+def store_category(cid):
+    """Отдельная страница категории со списком приложений."""
+    cat = _get_category(cid)
+    if not cat: return _json_err_page(404)
+    sort = request.args.get("sort") or "popular"
+    q = (request.args.get("q") or "").strip()
+    apps = _store_apps_query(cat_id=cid, q=q, sort=sort)
+    db = get_db()
+    related = [dict(r) for r in db.execute("SELECT * FROM app_categories WHERE id<>? ORDER BY name", (cid,)).fetchall()]
+    return render_template("store_category.html", user=session["user"], page="store",
+                           cat=cat, apps=apps, sort=sort, q=q, related=related,
+                           is_admin_flag=is_admin())
 
 @app.route("/store/app/<int:aid>")
 @login_required_html
@@ -372,9 +411,11 @@ def store_app(aid):
     if uid:
         m = db.execute("SELECT stars, text FROM app_reviews WHERE app_id=? AND user_id=?", (aid, uid)).fetchone()
         my = dict(m) if m else None
+    similar = _store_apps_query(cat_id=r["category_id"], limit=8) if r["category_id"] else []
+    similar = [a for a in similar if a["id"] != aid][:6]
     return render_template("store_app.html", user=session["user"], page="store",
                            app=_app_row_to_dict(r), reviews=reviews, my_review=my,
-                           is_admin_flag=is_admin())
+                           similar=similar, is_admin_flag=is_admin())
 
 @app.route("/admin_streaker")
 @login_required_html
@@ -2431,9 +2472,18 @@ def store_app_get(aid):
     if not r: return jsonify(ok=False, error="not_found"), 404
     return jsonify(ok=True, app=_app_row_to_dict(r))
 
+@app.route("/api/store/apps/<int:aid>/download")
+@login_required
+def store_app_download_get(aid):
+    """GET-ссылка на скачивание (кнопка «Скачать» ведёт сюда — браузер скачивает файл напрямую)."""
+    return _store_send_file(aid)
+
 @app.route("/api/store/apps/<int:aid>/download", methods=["POST"])
 @login_required
 def store_app_download(aid):
+    return _store_send_file(aid)
+
+def _store_send_file(aid):
     db = get_db()
     r = db.execute("SELECT * FROM store_apps WHERE id=?", (aid,)).fetchone()
     if not r: return jsonify(ok=False, error="not_found"), 404

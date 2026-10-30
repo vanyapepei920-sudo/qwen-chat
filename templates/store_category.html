@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ cat.emoji }} {{ cat.name }} — Магазин{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/store.css') }}">
+<div class="store-wrap">
+  <a href="/store" style="color:var(--muted);font-size:13px;text-decoration:none">← Назад в магазин</a>
+
+  <div class="sp-head" style="margin-top:14px">
+    <div class="st-icon cat-ic">{{ cat.emoji or '📦' }}</div>
+    <div class="sp-title" style="flex:1;min-width:220px">
+      <h1>{{ cat.name }}</h1>
+      <div class="pub">Категория магазина · Приложений: {{ apps|length }}</div>
+    </div>
+  </div>
+
+  {% if related %}
+  <div class="st-cats" style="margin-top:10px">
+    {% for c in related %}
+      <a class="st-chip" href="/store/category/{{ c.id }}">{{ c.emoji }} {{ c.name }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="st-search" style="margin-top:16px">
+    <div class="box">
+      <span class="ic">🔎</span>
+      <input id="catQ" placeholder="Поиск в категории «{{ cat.name }}»…" value="{{ q }}" autocomplete="off">
+    </div>
+  </div>
+
+  <div class="st-h">
+    <h2>{{ cat.emoji }} {{ cat.name }}</h2>
+    <div class="spacer"></div>
+    <div class="st-sort" id="stSort">
+      {% for k, lbl in [('popular','Популярные'), ('new','Новые'), ('rating','По рейтингу'), ('name','А–Я')] %}
+      <button data-sort="{{ k }}" class="{{ 'on' if sort==k else '' }}">{{ lbl }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="st-grid" id="stGrid">
+    {% for a in apps %}
+    <div class="app-card glass" data-id="{{ a.id }}">
+      <div class="row1">
+        {% if a.icon_path %}<div class="st-icon"><img src="{{ a.icon_path }}" alt=""></div>
+        {% else %}<div class="st-icon">{{ a.category_emoji or '📦' }}</div>{% endif %}
+        <div style="min-width:0">
+          <div class="ttl">{{ a.title }}</div>
+          <div class="pub">{{ a.publisher or 'Неизвестный издатель' }}</div>
+        </div>
+      </div>
+      <div class="tagline">{{ (a.tagline or a.description or '')[:140] }}</div>
+      <div class="meta">
+        <span class="stars">{% for i in range(1,6) %}<span class="{{ '' if i <= (a.rating|round(0,'common')|int) else 'dim' }}">★</span>{% endfor %}</span>
+        <span>⬇ {{ a.downloads }}</span><span>{{ a.size_h }}</span>
+      </div>
+      {% if a.filename %}
+      <a class="btn sm primary dl-btn" href="/api/store/apps/{{ a.id }}/download">⬇ Скачать</a>
+      {% else %}
+      <button class="btn sm dl-btn" disabled>Нет файла</button>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="st-empty" id="stEmpty" {% if apps %}hidden{% endif %}>
+    <div class="big">🗂</div>
+    <div>В этой категории пока нет приложений.<br><small>Загляните позже или выберите другую категорию.</small></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const cid = {{ cat.id }}, $ = s => document.querySelector(s);
+  // переключение сортировки — серверная, через query-параметры
+  $('#stSort').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const p = new URLSearchParams(location.search);
+    p.set('sort', b.dataset.sort);
+    location.href = '/store/category/' + cid + '?' + p.toString();
+  });
+  // поиск в категории — через API
+  let timer;
+  $('#catQ').addEventListener('input', e => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = e.target.value.trim();
+      const j = await fetch('/api/store/apps?category={{ cat.name }}&q=' + encodeURIComponent(q) +
+                            '&sort={{ sort }}', {credentials:'include'}).then(r=>r.json());
+      render(j.items || []);
+    }, 300);
+  });
+  function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function render(items){
+    $('#stEmpty').hidden = items.length > 0;
+    $('#stGrid').innerHTML = items.map(a =>
+      '<div class="app-card glass" data-id="'+a.id+'"><div class="row1">'+
+      (a.icon_path ? '<div class="st-icon"><img src="'+esc(a.icon_path)+'" alt=""></div>'
+                   : '<div class="st-icon">'+esc(a.category_emoji||'📦')+'</div>')+
+      '<div style="min-width:0"><div class="ttl">'+esc(a.title)+'</div>'+
+      '<div class="pub">'+esc(a.publisher||'Неизвестный издатель')+'</div></div></div>'+
+      '<div class="tagline">'+esc((a.tagline||a.description||'').slice(0,140))+'</div>'+
+      '<div class="meta"><span class="stars">'+
+        [1,2,3,4,5].map(i=>'<span'+(i<=Math.round(a.rating||0)?'':' class="dim"')+'>★</span>').join('')+
+      '</span><span>⬇ '+a.downloads+'</span><span>'+esc(a.size_h||'—')+'</span></div>'+
+      (a.filename ? '<a class="btn sm primary dl-btn" href="/api/store/apps/'+a.id+'/download">⬇ Скачать</a>'
+                  : '<button class="btn sm dl-btn" disabled>Нет файла</button>')+
+      '</div>').join('');
+  }
+  // клик по карточке → страница приложения (не по кнопке скачивания)
+  document.addEventListener('click', e => {
+    if (e.target.closest('.dl-btn')) return;
+    const card = e.target.closest('.app-card');
+    if (card) location.href = '/store/app/' + card.dataset.id;
+  });
+})();
+</script>
+{% endblock %}
