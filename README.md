@@ -49,6 +49,7 @@ uploads/apps|icons      — файлы приложений и иконки
 | Переменная | Назначение |
 |---|---|
 | GOOGLE_CLIENT_ID | OAuth Client ID Google |
+| GOOGLE_CLIENT_SECRET | OAuth Client Secret Google (не требуется для проверки ID-токена) |
 | FLASK_SECRET_KEY | ключ сессий |
 | FLASK_DEBUG | режим отладки (True/False) |
 | SESSION_LIFETIME_HOURS | время жизни сессии, ч |
