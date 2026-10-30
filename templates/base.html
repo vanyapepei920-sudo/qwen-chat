@@ -36,6 +36,8 @@
   <a href="{{ url_for('store') }}#cats" data-tab="cats">🗂 Категории</a>
   <a href="{{ url_for('store') }}#recs" data-tab="recs">✨ Рекомендации</a>
   <a href="{{ url_for('store') }}?sort=new" data-tab="new">🆕 Новинки</a>
+  <a href="{{ url_for('ai_page') }}" data-tab="ai" class="{{ 'on' if page=='ai' }}">🤖 ИИ-помощник</a>
+  <a href="{{ url_for('store_request_access') }}" data-tab="request-access" class="{{ 'on' if page=='request-access' }}">🏢 Права организации</a>
 </nav>
 {% endif %}
 

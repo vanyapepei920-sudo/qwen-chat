@@ -3,7 +3,7 @@ Google-вход, категории, загрузка приложений (ад
 рекомендации (по лайкам, скачиваниям и оценкам), поиск.
 Секретная страница активации прав администратора: /admin_streaker
 """
-import os, sys, re, time, json, uuid, sqlite3, logging, secrets, hashlib, base64
+import os, sys, re, time, json, uuid, sqlite3, logging, secrets, hashlib, base64, threading
 from pathlib import Path
 from datetime import timedelta, datetime
 from functools import wraps
@@ -1209,8 +1209,8 @@ def org_request_submit():
         logo_path = _save_image(lf, "brands")
     db = get_db()
     cur = db.execute("""INSERT INTO org_requests(uuid,first_name,last_name,org_name,org_type,email,phone,
-        country,website,app_name,app_desc,message,logo_path,status,user_sub,user_email,user_name,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)""",
+        country,website,app_name,app_desc,message,logo_path,user_sub,user_email,user_name,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (req_uuid, first_name, last_name, org_name, org_type, email, field("phone", 40),
          field("country", 60), field("website", 120), field("app_name", 120), field("app_desc", 1500),
          field("message", 3000), logo_path, u.get("sub") or "", u.get("email") or "", u.get("name") or "", now))
