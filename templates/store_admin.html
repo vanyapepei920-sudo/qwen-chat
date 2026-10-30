@@ -150,8 +150,8 @@
           {% if q.admin_note %}<div class="org-note"><b>Решение админа:</b> {{ q.admin_note }} ({{ q.decided_by }})</div>{% endif %}
         </div>
         <div class="org-actions">
-          {% if q.pdf_path %}<a class="btn sm" href="/{{ q.pdf_path }}" target="_blank" rel="noopener">📄 Открыть PDF</a>
-          {% else %}<span style="font-size:11.5px;color:var(--muted)">PDF не сгенерирован (fpdf2 не установлен)</span>{% endif %}
+          {% if q.pdf_path %}<a class="btn sm" href="/{{ q.pdf_path }}" target="_blank" rel="noopener">{{ '📄 Открыть PDF' if q.pdf_path.endswith('.pdf') else '📄 Открыть отчёт' }}</a>
+          {% else %}<span style="font-size:11.5px;color:var(--muted)">Документ не сформирован</span>{% endif %}
           <input class="inp org-note-inp" placeholder="Комментарий к решению (необязательно)" maxlength="1000">
           <button class="btn sm primary" data-dec="approved">✔ Принять</button>
           <button class="btn sm" data-dec="rejected" style="color:var(--bad)">✖ Отклонить</button>

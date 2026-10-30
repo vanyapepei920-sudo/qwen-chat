@@ -46,6 +46,9 @@ pkg install python git
 git clone https://github.com/vanyapepei920-sudo/qwen-chat scuarfy-store
 cd scuarfy-store
 pip install -r requirements.txt   # google-auth ставить НЕ нужно
+# Если установка fpdf2 всё же падает (например, из-за Pillow на свежем Python) —
+# не страшно: приложение само переключится на текстовые отчёты (.txt) вместо PDF.
+# В таком случае можно поставить минимум: pip install flask flask-cors python-dotenv requests
 cp .env.example .env              # заполните GOOGLE_CLIENT_ID и ADMIN_PASSWORD
 python app.py                     # http://127.0.0.1:5000/store
 ```

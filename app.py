@@ -648,11 +648,68 @@ def _pdf_font_path():
     return None
 
 def _make_request_pdf(req):
+    """Возвращает относительный путь к документу заявки.
+
+    Приоритет: PDF (fpdf2, если установлен) → текстовый отчёт .txt
+    (работает всегда, без сторонних зависимостей).
+    """
+    req = dict(req)
+    rel = _request_pdf(req)
+    if not rel:
+        rel = _request_txt(req)
+    return rel
+
+
+def _request_fields(req):
+    """Упорядоченный список пар (метка, значение) для отчёта заявки."""
+    return [
+        ("Номер заявки", req.get("uuid")),
+        ("Тип заявителя", "Игровая студия / игра" if req.get("org_type") == "game" else "Организация / компания"),
+        ("ФИО контактного лица", f'{req.get("last_name","")} {req.get("first_name","")}'.strip()),
+        ("Название организации", req.get("org_name")),
+        ("Email", req.get("email")),
+        ("Телефон", req.get("phone")),
+        ("Страна / регион", req.get("country")),
+        ("Сайт", req.get("website")),
+        ("Планируемое приложение", req.get("app_name")),
+        ("Краткое описание приложения", req.get("app_desc")),
+        ("Дополнительная информация", req.get("message")),
+        ("Аккаунт отправителя", f'{req.get("user_name","")} <{req.get("user_email","")}>'),
+        ("Дата подачи заявки", str(req.get("created_at","")).replace("T", " ")),
+        ("Статус", {"pending": "На рассмотрении", "approved": "Одобрена",
+                    "rejected": "Отклонена"}.get(req.get("status"), req.get("status"))),
+        ("Комментарий администратора", req.get("admin_note")),
+    ]
+
+
+def _request_txt(req):
+    """Текстовый отчёт заявки — фолбэк без fpdf2/Pillow (Termux-safe)."""
+    rel = f"uploads/requests/{req['uuid']}.txt"
+    path = BASE_DIR / rel
+    lines = ["SCUARFY STORE — ЗАЯВКА ОРГАНИЗАЦИИ",
+             "Запрос на публикацию приложений от имени организации", "=" * 48, ""]
+    for label, value in _request_fields(req):
+        value = str(value or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    lines += ["", "-" * 48,
+              "Документ сформирован автоматически в Scuarfy Store.",
+              "Администратор рассматривает заявку в панели управления и принимает решение."]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return rel
+    except Exception as e:
+        log.warning("txt report: %s", e)
+        return ""
+
+
+def _request_pdf(req):
     """Генерирует PDF-анкету заявки организации (fpdf2 + DejaVu для кириллицы)."""
     try:
         from fpdf import FPDF
     except ImportError:
-        log.warning("fpdf2 не установлен — PDF заявки не сгенерирован (pip install fpdf2)")
+        log.info("fpdf2 не установлен — используется текстовый отчёт (.txt)")
         return ""
     req = dict(req)
     rel = f"uploads/requests/{req['uuid']}.pdf"
