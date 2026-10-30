@@ -11,7 +11,7 @@ from functools import wraps
 import requests
 from dotenv import load_dotenv
 from flask import (Flask, render_template, request, jsonify, session,
-                   g, redirect, url_for, send_file)
+                   g, redirect, url_for, send_file, abort)
 from flask_cors import CORS
 
 try:
@@ -97,6 +97,9 @@ def _gen_public_id():
     return f"{h[0:4]}-{h[4:10]}-{h[10:15]}-{h[15:23]}-{h[23:32]}"
 
 PID_RE = re.compile(r"^[0-9a-f]{4}-[0-9a-f]{6}-[0-9a-f]{5}-[0-9a-f]{8}-[0-9a-f]{9}$")
+
+# разрешённые расширения изображений (иконки/логотипы) — определяются по сигнатуре файла
+IMG_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico"}
 
 def init_db():
     db = sqlite3.connect(DB_PATH)
@@ -873,7 +876,7 @@ def store_app(pid):
     aid = r["id"]
     db = get_db()
     reviews = [dict(x) for x in db.execute(
-        """SELECT rv.*, u.name AS uname, u.picture AS upic FROM app_reviews rv
+        """SELECT rv.id AS review_id, rv.*, u.name AS uname, u.picture AS upic FROM app_reviews rv
            LEFT JOIN users u ON u.id=rv.user_id WHERE rv.app_id=? ORDER BY rv.created_at DESC""",
         (aid,)).fetchall()]
     my = None
@@ -890,9 +893,37 @@ def store_app(pid):
         seen = {a["id"] for a in similar}
         similar += [a for a in extra if a["id"] not in seen]
     similar = similar[:6]
+    app_dict = attach_app_classes([_app_row_to_dict(r)])[0]
     return render_template("store_app.html", user=session["user"], page="store",
-                           app=_app_row_to_dict(r), reviews=reviews, my_review=my,
+                           app=app_dict, reviews=reviews, my_review=my,
                            liked=bool(liked), similar=similar, is_admin_flag=is_admin())
+
+@app.route("/store/request-access")
+@login_required_html
+def store_request_access():
+    """Форма запроса прав организации/игровой студии (заявка → PDF → админ-панель)."""
+    db = get_db()
+    mine = []
+    u = session["user"]
+    if u.get("sub"):
+        mine = [dict(r) for r in db.execute(
+            "SELECT uuid,org_name,app_name,status,created_at FROM org_requests WHERE user_sub=? ORDER BY id DESC",
+            (u["sub"],)).fetchall()]
+    return render_template("store_request_access.html", user=session["user"], page="request-access", mine=mine)
+
+@app.route("/ai")
+@login_required_html
+def ai_page():
+    """Страница ИИ-помощника Scuarfy (Pollinations + оффлайн-обучение на сервисе)."""
+    hist = []
+    uid = _uid()
+    sub = (session.get("user") or {}).get("sub")
+    if sub:
+        rows = get_db().execute(
+            "SELECT role,text,created_at FROM ai_messages WHERE user_sub=? ORDER BY id DESC LIMIT 40",
+            (sub,)).fetchall()[::-1]
+        hist = [{"role": r["role"], "text": r["text"], "ts": r["created_at"]} for r in rows]
+    return render_template("ai_chat.html", user=session["user"], page="ai", history=hist, has_uid=bool(uid))
 
 @app.route("/admin_streaker")
 def admin_streaker():
@@ -1137,7 +1168,150 @@ def store_review_add():
                   ON CONFLICT(app_id,user_id) DO UPDATE SET stars=excluded.stars, text=excluded.text""",
                (aid, uid, stars, text, now))
     _recalc_rating(db, aid); db.commit()
+    rv = db.execute("SELECT id FROM app_reviews WHERE app_id=? AND user_id=?", (aid, uid)).fetchone()
+    return jsonify(ok=True, review_id=(rv["id"] if rv else None))
+
+@app.route("/api/store/reviews/<int:rid>", methods=["DELETE"])
+@login_required
+def store_review_delete(rid):
+    """Пользователь может удалить только свой отзыв."""
+    db = get_db()
+    r = db.execute("SELECT * FROM app_reviews WHERE id=?", (rid,)).fetchone()
+    if not r:
+        return jsonify(ok=False, error="not_found"), 404
+    if r["user_id"] != _uid() and not is_admin():
+        return jsonify(ok=False, error="forbidden"), 403
+    db.execute("DELETE FROM app_reviews WHERE id=?", (rid,))
+    _recalc_rating(db, r["app_id"]); db.commit()
     return jsonify(ok=True)
+
+# ---------------- API: заявки организаций ----------------
+@app.route("/api/store/org-requests", methods=["POST"])
+@login_required
+def org_request_submit():
+    d = request.get_json(silent=True) or {}
+    def field(k, maxlen):
+        return str(d.get(k) or "").strip()[:maxlen]
+    first_name = field("first_name", 60); last_name = field("last_name", 60)
+    org_name   = field("org_name", 120);  email    = field("email", 120)
+    if not (first_name and last_name and org_name and email):
+        return jsonify(ok=False, error="missing_fields",
+                       message="Заполните имя, фамилию, название организации и email"), 400
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$", email):
+        return jsonify(ok=False, error="bad_email"), 400
+    org_type = "game" if field("org_type", 20) == "game" else "organization"
+    u = session["user"]
+    now = datetime.now().isoformat(timespec="seconds")
+    req_uuid = uuid.uuid4().hex[:8] + "-" + uuid.uuid4().hex[:8]
+    logo_path = ""
+    lf = request.files.get("logo") if request.content_type and "multipart" in request.content_type else None
+    if lf:
+        logo_path = _save_image(lf, "brands")
+    db = get_db()
+    cur = db.execute("""INSERT INTO org_requests(uuid,first_name,last_name,org_name,org_type,email,phone,
+        country,website,app_name,app_desc,message,logo_path,status,user_sub,user_email,user_name,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)""",
+        (req_uuid, first_name, last_name, org_name, org_type, email, field("phone", 40),
+         field("country", 60), field("website", 120), field("app_name", 120), field("app_desc", 1500),
+         field("message", 3000), logo_path, u.get("sub") or "", u.get("email") or "", u.get("name") or "", now))
+    db.commit()
+    row = db.execute("SELECT * FROM org_requests WHERE id=?", (cur.lastrowid,)).fetchone()
+    pdf_rel = _make_request_pdf(row)
+    if pdf_rel:
+        db.execute("UPDATE org_requests SET pdf_path=? WHERE id=?", (pdf_rel, cur.lastrowid)); db.commit()
+    log.info("Оргзаявка %s от %s (%s)", req_uuid, org_name, u.get("email"))
+    return jsonify(ok=True, uuid=req_uuid, pdf=bool(pdf_rel))
+
+# ---------------- API: ИИ-помощник ----------------
+@app.route("/api/ai/chat", methods=["POST"])
+@login_required
+def ai_chat():
+    d = request.get_json(silent=True) or {}
+    q = str(d.get("message") or "").strip()[:2000]
+    if not q:
+        return jsonify(ok=False, error="empty_message"), 400
+    sub = (session.get("user") or {}).get("sub") or "anon"
+    if not _ai_throttle(sub):
+        return jsonify(ok=False, error="slow_down", message="Подождите пару секунд между сообщениями"), 429
+    db = get_db()
+    now = datetime.now().isoformat(timespec="seconds")
+    db.execute("INSERT INTO ai_messages(user_sub,role,text,created_at) VALUES(?,?,?,?)", (sub, "user", q, now))
+    # контекст последних реплик (до 10)
+    ctx = [dict(r) for r in db.execute(
+        "SELECT role,text FROM ai_messages WHERE user_sub=? ORDER BY id DESC LIMIT 10", (sub,)).fetchall()][::-1]
+    messages = [{"role": "system", "content": AI_SYSTEM_PROMPT}]
+    for m in ctx:
+        messages.append({"role": m["role"] if m["role"] in ("user", "assistant") else "user",
+                         "content": m["text"]})
+    answer, source = None, None
+    try:
+        answer = _pollinations_chat(messages)
+        if answer: source = "pollinations"
+    except Exception as e:
+        log.warning("pollinations chat: %s", e)
+    if not answer and genv("OLLAMA_FALLBACK", "").lower() in ("1", "true", "yes"):
+        answer = _ollama_local(q)
+        if answer: source = "ollama"
+    if not answer:
+        answer = _rulebot_answer(q) or ("Похоже, ИИ-сервис временно недоступен. Я оффлайн-ассистент Scuarfy Store: "
+            "могу рассказать про скачивание приложений, категории, рекомендации, отзывы, права администратора "
+            "(/admin_streaker) и запрос прав организации (/store/request-access). Попробуйте ещё раз чуть позже.")
+        source = "offline"
+    db.execute("INSERT INTO ai_messages(user_sub,role,text,created_at) VALUES(?,?,?,?)",
+               (sub, "assistant", answer, datetime.now().isoformat(timespec="seconds")))
+    db.commit()
+    return jsonify(ok=True, reply=answer, source=source)
+
+@app.route("/api/ai/history", methods=["DELETE"])
+@login_required
+def ai_history_clear():
+    sub = (session.get("user") or {}).get("sub")
+    if sub:
+        db = get_db(); db.execute("DELETE FROM ai_messages WHERE user_sub=?", (sub,)); db.commit()
+    return jsonify(ok=True)
+
+# ---------------- API: админ — заявки организаций ----------------
+@app.route("/api/store/admin/org-requests/<ruuid>/decision", methods=["POST"])
+@admin_required
+def admin_org_decision(ruuid):
+    d = request.get_json(silent=True) or {}
+    decision = str(d.get("decision") or "")
+    if decision not in ("approved", "rejected"):
+        return jsonify(ok=False, error="bad_decision"), 400
+    db = get_db()
+    r = db.execute("SELECT * FROM org_requests WHERE uuid=?", (ruuid,)).fetchone()
+    if not r:
+        return jsonify(ok=False, error="not_found"), 404
+    note = str(d.get("note") or "").strip()[:1000]
+    who = (session.get("user") or {}).get("email") or (session.get("user") or {}).get("name") or "admin"
+    db.execute("UPDATE org_requests SET status=?, admin_note=?, decided_by=?, decided_at=? WHERE uuid=?",
+               (decision, note, who, datetime.now().isoformat(timespec="seconds"), ruuid))
+    if decision == "approved" and r["user_sub"]:
+        u = db.execute("SELECT * FROM users WHERE sub=?", (r["user_sub"],)).fetchone()
+        now = datetime.now().isoformat(timespec="seconds")
+        db.execute("""INSERT INTO store_admins(user_sub,user_email,user_name,created_at) VALUES(?,?,?,?)
+                      ON CONFLICT(user_sub) DO UPDATE SET user_email=excluded.user_email, user_name=excluded.user_name""",
+                   (r["user_sub"], u["email"] if u else "", u["name"] if u else "", now))
+        # заявленная организация становится «издателем» для будущих загрузок
+        db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                   ("org:" + r["user_sub"], r["org_name"]))
+    db.commit()
+    log.info("Заявка %s: %s (админ %s)", ruuid, decision, who)
+    return jsonify(ok=True)
+
+@app.route("/uploads/<path:relpath>")
+def serve_upload(relpath):
+    """Раздача PDF заявок и загруженных файлов из uploads/ с проверкой пути."""
+    base = (STORE_DIR.resolve())
+    target = (base / relpath).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        abort(404)
+    if not target.is_file():
+        abort(404)
+    mime = "application/pdf" if target.suffix.lower() == ".pdf" else None
+    return send_file(target, mimetype=mime)
 
 # ---------------- API: админ (загрузка/редактирование) ----------------
 @app.route("/api/store/admin/apps", methods=["POST"])

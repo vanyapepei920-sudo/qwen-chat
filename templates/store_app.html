@@ -8,8 +8,10 @@
     {% if app.icon_path %}<div class="st-icon"><img src="{{ app.icon_path }}" alt=""></div>
     {% else %}<div class="st-icon">{{ app.category_emoji or '📦' }}</div>{% endif %}
     <div style="flex:1;min-width:240px">
-      <h1>{{ app.title }}</h1>
-      <div class="pub">{{ app.publisher or 'Неизвестный издатель' }}
+      <h1>{{ app.title }}
+        {% if app.app_class %}<span class="app-class {{ app.app_class }}">
+          <img src="{{ app.class_icon }}" alt="" class="cls-ic">{{ app.class_label }}</span>{% endif %}</h1>
+      <div class="pub">{% if app.brand_logo %}<img class="brand-logo" src="{{ app.brand_logo }}" alt="">{% endif %}{{ app.publisher or 'Неизвестный издатель' }}
         {% if app.category_name %} · <a href="/store/category/{{ app.category_id }}"
             style="color:var(--brand);text-decoration:none">{{ app.category_emoji }} {{ app.category_name }}</a>{% endif %}</div>
       {% if app.tagline %}<div class="pub" style="margin-top:6px;color:var(--ink)">{{ app.tagline }}</div>{% endif %}
@@ -58,10 +60,11 @@
     <div id="revList">
       {% if reviews %}
         {% for r in reviews %}
-        <div class="rev">
+        <div class="rev" data-rid="{{ r.review_id }}">
           <div class="av">{% if r.upic %}<img src="{{ r.upic }}" referrerpolicy="no-referrer" alt="">{% else %}👤{% endif %}</div>
           <div style="min-width:0">
-            <div class="who">{{ r.uname or 'Пользователь' }} <span class="when">· {{ r.created_at[:10] }}</span></div>
+            <div class="who">{{ r.uname or 'Пользователь' }} <span class="when">· {{ r.created_at[:10] }}</span>
+              {% if r.user_id == user.db_id %}<button class="rev-del" title="Удалить мой отзыв">🗑 Удалить</button>{% endif %}</div>
             <div class="stars">{% for i in range(1,6) %}<span class="{{ '' if i<=r.stars else 'dim' }}">★</span>{% endfor %}</div>
             {% if r.text %}<div class="txt">{{ r.text }}</div>{% endif %}
           </div>
@@ -143,6 +146,17 @@
     if(j.ok){toast('Отзыв сохранён','ok');setTimeout(()=>location.reload(),600);}
     else toast('Ошибка: '+(j.error||'?'),'err');
   };
+
+  /* удаление своего отзыва */
+  document.getElementById('revList').addEventListener('click', async e=>{
+    const b=e.target.closest('.rev-del'); if(!b) return;
+    if(!confirm('Удалить ваш отзыв?')) return;
+    const rid=b.closest('.rev').dataset.rid;
+    const r=await fetch('/api/store/reviews/'+rid,{method:'DELETE',credentials:'include'});
+    const j=await r.json();
+    if(j.ok){toast('Отзыв удалён','ok');setTimeout(()=>location.reload(),500);}
+    else toast('Не удалось удалить','err');
+  });
 })();
 </script>
 {% endblock %}

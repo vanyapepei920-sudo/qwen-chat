@@ -9,6 +9,7 @@
     <button class="sa-tab on" data-p="upload">⬆ Загрузить приложение</button>
     <button class="sa-tab" data-p="apps">📦 Приложения</button>
     <button class="sa-tab" data-p="cats">🗂 Категории</button>
+    <button class="sa-tab" data-p="orgs">🏢 Заявки{% if pending_cnt %} <span class="sa-badge">{{ pending_cnt }}</span>{% endif %}</button>
     <button class="sa-tab" data-p="admins">👑 Администраторы</button>
   </div>
 
@@ -27,11 +28,14 @@
         <label class="fld full">Краткое описание<input class="inp" name="tagline" maxlength="200"></label>
         <label class="fld full">Полное описание<textarea class="inp" name="description" rows="4"></textarea></label>
         <label class="fld full">Файл приложения (.exe, .zip, .apk …)*
-          <span class="file-drop" id="fdFile">📎 Выберите файл (до {{ max_mb }} МБ)
+          <span class="file-drop" id="fdFile">📎 Выберите файл (до {{ max_gb }} ГБ)
             <input type="file" name="file" id="inFile" required></span></label>
         <label class="fld full">Иконка (png/jpg/svg, необязательно)
           <span class="file-drop" id="fdIcon">🖼 Выберите изображение
             <input type="file" name="icon" id="inIcon" accept="image/*"></span></label>
+        <label class="fld full">Логотип бренда/организации (необязательно, показывается на странице приложения)
+          <span class="file-drop" id="fdBrand">🏷 Выберите логотип
+            <input type="file" name="brand_logo" id="inBrand" accept="image/*"></span></label>
         <div class="fld full"><button class="btn primary" id="upBtn" type="submit">⬆ Загрузить в магазин</button></div>
       </div>
     </form>
@@ -115,6 +119,47 @@
         </tr>
         {% endfor %}
       </tbody></table>
+  </section>
+
+  <!-- ЗАЯВКИ ОРГАНИЗАЦИЙ -->
+  <section class="card sa-panel" id="p-orgs" hidden>
+    <div class="card-h"><h3>🏢 Заявки на права организации</h3></div>
+    <p style="color:var(--ink-2);font-size:12px;margin-bottom:12px">
+      Откройте PDF-анкету, изучите данные и примите решение. При одобрении заявитель получает
+      права администратора магазина (сможет публиковать приложения от имени своей организации).</p>
+    <div id="orgList">
+      {% for q in requests %}
+      <div class="org-item {{ 'pending' if q.status=='pending' }}" data-uuid="{{ q.uuid }}">
+        <div class="org-head">
+          <div class="org-title">
+            <b>{{ q.org_name }}</b>
+            <span class="org-type">{{ '🎮 Игра/студия' if q.org_type=='game' else '🏢 Организация' }}</span>
+            {% if q.status=='pending' %}<span class="sa-badge">новая</span>
+            {% elif q.status=='approved' %}<span class="org-ok">✔ одобрена</span>
+            {% else %}<span class="org-no">✖ отклонена</span>{% endif %}
+          </div>
+          <div class="org-meta">{{ q.user_name or '—' }} · {{ q.created_at[:10] if q.created_at else '' }} · №{{ q.uuid }}</div>
+        </div>
+        <div class="org-body">
+          <div><b>Контакт:</b> {{ q.last_name }} {{ q.first_name }}, {{ q.email }}{% if q.phone %}, {{ q.phone }}{% endif %}</div>
+          {% if q.country %}<div><b>Страна:</b> {{ q.country }}</div>{% endif %}
+          {% if q.website %}<div><b>Сайт:</b> {{ q.website }}</div>{% endif %}
+          {% if q.app_name %}<div><b>Приложение:</b> {{ q.app_name }}</div>{% endif %}
+          {% if q.app_desc %}<div><b>Описание:</b> {{ q.app_desc[:300] }}</div>{% endif %}
+          {% if q.message %}<div><b>Комментарий:</b> {{ q.message[:400] }}</div>{% endif %}
+          {% if q.admin_note %}<div class="org-note"><b>Решение админа:</b> {{ q.admin_note }} ({{ q.decided_by }})</div>{% endif %}
+        </div>
+        <div class="org-actions">
+          {% if q.pdf_path %}<a class="btn sm" href="/{{ q.pdf_path }}" target="_blank" rel="noopener">📄 Открыть PDF</a>
+          {% else %}<span style="font-size:11.5px;color:var(--muted)">PDF не сгенерирован (fpdf2 не установлен)</span>{% endif %}
+          <input class="inp org-note-inp" placeholder="Комментарий к решению (необязательно)" maxlength="1000">
+          <button class="btn sm primary" data-dec="approved">✔ Принять</button>
+          <button class="btn sm" data-dec="rejected" style="color:var(--bad)">✖ Отклонить</button>
+        </div>
+      </div>
+      {% endfor %}
+      {% if not requests %}<p style="color:var(--ink-2);font-size:13px">Заявок пока нет.</p>{% endif %}
+    </div>
   </section>
 
   <!-- АДМИНИСТРАТОРЫ -->

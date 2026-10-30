@@ -8,7 +8,7 @@
   $('#saTabs').addEventListener('click',e=>{
     const b=e.target.closest('.sa-tab'); if(!b||!b.dataset.p)return;
     $$('#saTabs .sa-tab').forEach(x=>x.classList.toggle('on',x===b));
-    ['upload','apps','cats','admins'].forEach(p=>$('#p-'+p).hidden=(p!==b.dataset.p));
+    ['upload','apps','cats','orgs','admins'].forEach(p=>$('#p-'+p).hidden=(p!==b.dataset.p));
     $('#editBox').hidden=true; $('#fileBox').hidden=true;
   });
 
@@ -22,7 +22,7 @@
     });
     const d=$('#'+dropId); d.setAttribute('data-orig', d.firstChild.textContent);
   }
-  bindDrop('inFile','fdFile','файл'); bindDrop('inIcon','fdIcon','иконка');
+  bindDrop('inFile','fdFile','файл'); bindDrop('inIcon','fdIcon','иконка'); bindDrop('inBrand','fdBrand','логотип');
 
   /* загрузка приложения (без кнопки «рекомендовать» — ID и рекомендации автоматические) */
   $('#upForm').addEventListener('submit',async e=>{
@@ -120,5 +120,24 @@
     const j=await J('/api/store/admin/admins/'+tr.dataset.id,{method:'DELETE'});
     if(j.ok){toast('Права отозваны','ok');setTimeout(()=>location.reload(),600);}
     else toast(j.error==='cannot_revoke_self'?'Нельзя отозвать собственные права':'Ошибка','err');
+  });
+})();
+
+/* заявки организаций: принять / отклонить */
+(function(){
+  const list=document.getElementById('orgList'); if(!list) return;
+  list.addEventListener('click', async e=>{
+    const b=e.target.closest('[data-dec]'); if(!b) return;
+    const item=b.closest('.org-item'); const uuid=item.dataset.uuid;
+    const note=(item.querySelector('.org-note-inp')||{}).value||'';
+    if(b.dataset.dec==='rejected' && !confirm('Отклонить заявку?')) return;
+    b.disabled=true;
+    const r=await fetch('/api/store/admin/org-requests/'+uuid+'/decision',{
+      method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({decision:b.dataset.dec,note:note.trim()})});
+    const j=await r.json();
+    if(j.ok){toast(b.dataset.dec==='approved'?'Заявка одобрена — выданы права администратора':'Заявка отклонена','ok');
+      setTimeout(()=>location.reload(),700);}
+    else {toast('Ошибка: '+(j.error||'?'),'err'); b.disabled=false;}
   });
 })();
