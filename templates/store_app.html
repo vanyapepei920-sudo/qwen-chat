@@ -1,24 +1,26 @@
 {% extends "base.html" %}
-{% block title %}{{ app.title }} — Магазин{% endblock %}
+{% block title %}{{ app.title }} — Scuarfy Store{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/store.css') }}">
 <div class="store-wrap">
-  <a href="/store" style="color:var(--muted);font-size:13px;text-decoration:none">← Назад в магазин</a>
+  <a href="/store" style="color:var(--ink-2);font-size:13px;text-decoration:none">← Назад в магазин</a>
 
-  <div class="sp-head" style="margin-top:14px">
+  <div class="sp-head">
     {% if app.icon_path %}<div class="st-icon"><img src="{{ app.icon_path }}" alt=""></div>
     {% else %}<div class="st-icon">{{ app.category_emoji or '📦' }}</div>{% endif %}
-    <div class="sp-title" style="flex:1;min-width:220px">
+    <div style="flex:1;min-width:240px">
       <h1>{{ app.title }}</h1>
       <div class="pub">{{ app.publisher or 'Неизвестный издатель' }}
         {% if app.category_name %} · <a href="/store/category/{{ app.category_id }}"
-            style="color:var(--acc2);text-decoration:none">{{ app.category_emoji }} {{ app.category_name }}</a>{% endif %}</div>
-      {% if app.tagline %}<div class="pub" style="margin-top:6px;color:#c9cfe6">{{ app.tagline }}</div>{% endif %}
+            style="color:var(--brand);text-decoration:none">{{ app.category_emoji }} {{ app.category_name }}</a>{% endif %}</div>
+      {% if app.tagline %}<div class="pub" style="margin-top:6px;color:var(--ink)">{{ app.tagline }}</div>{% endif %}
+      <div class="pid-line" style="margin-top:10px">ID: {{ app.public_id }}
+        <button id="copyPid" title="Скопировать ID">📋</button></div>
     </div>
   </div>
 
   <div class="sp-meta">
     <div><b>{{ '%.1f'|format(app.rating) if app.votes else '—' }}</b>Рейтинг ({{ app.votes }})</div>
+    <div><b>♥ {{ app.likes }}</b>Лайков</div>
     <div><b>⬇ {{ app.downloads }}</b>Скачиваний</div>
     <div><b>{{ app.size_h }}</b>Размер</div>
     <div><b>v{{ app.version }}</b>Версия</div>
@@ -27,23 +29,24 @@
 
   <div class="sp-actions">
     {% if app.filename %}
-      <a class="btn primary get" id="dlBtn" href="/api/store/apps/{{ app.id }}/download">⬇ Скачать ({{ app.size_h }})</a>
+      <a class="btn primary get" id="dlBtn" href="/api/store/apps/{{ app.public_id }}/download">⬇ Скачать ({{ app.size_h }})</a>
     {% else %}
       <button class="btn get" disabled>Файл недоступен</button>
     {% endif %}
-    {% if is_admin_flag %}<a class="btn ghost" href="/store-admin">✏ Редактировать в админ-панели</a>{% endif %}
+    <button class="btn {{ 'primary' if liked else '' }}" id="likeBtn" data-pid="{{ app.public_id }}">
+      ♥ <span id="likeTxt">{{ 'Лайкнут' if liked else 'Лайк' }}</span> (<span id="likeCnt">{{ app.likes }}</span>)
+    </button>
   </div>
 
-  <section class="card glass" style="margin-top:18px">
+  <section class="card" style="margin-top:18px">
     <div class="card-h"><h3>Об этом приложении</h3></div>
     <div class="sp-desc">{{ app.description or 'Описание не добавлено.' }}</div>
   </section>
 
-  <section class="card glass" style="margin-top:16px">
+  <section class="card" style="margin-top:16px">
     <div class="card-h"><h3>⭐ Оценки и отзывы</h3></div>
-
     <div style="margin-bottom:16px">
-      <div style="font-size:12.5px;color:var(--muted);margin-bottom:6px">Ваша оценка:</div>
+      <div style="font-size:12.5px;color:var(--ink-2);margin-bottom:6px">Ваша оценка:</div>
       <div class="star-pick" id="starPick">
         {% for i in range(1,6) %}<span data-s="{{ i }}" class="{{ 'on' if my_review and my_review.stars>=i }}">★</span>{% endfor %}
       </div>
@@ -52,7 +55,6 @@
       <button class="btn sm primary" id="revSend" style="margin-top:8px">
         {{ 'Обновить отзыв' if my_review else 'Отправить отзыв' }}</button>
     </div>
-
     <div id="revList">
       {% if reviews %}
         {% for r in reviews %}
@@ -73,10 +75,10 @@
 
   {% if similar %}
   <section style="margin-top:22px">
-    <div class="st-h"><h2>Похожие приложения</h2></div>
+    <div class="st-h"><h2>✨ Рекомендуем похожие</h2></div>
     <div class="st-grid">
       {% for a in similar %}
-      <a class="app-card glass sim-card" href="/store/app/{{ a.id }}">
+      <a class="app-card" href="/store/app/{{ a.public_id }}" style="text-decoration:none;color:inherit">
         <div class="row1">
           {% if a.icon_path %}<div class="st-icon"><img src="{{ a.icon_path }}" alt=""></div>
           {% else %}<div class="st-icon">{{ a.category_emoji or '📦' }}</div>{% endif %}
@@ -84,7 +86,7 @@
           <div class="pub">{{ a.publisher or 'Неизвестный издатель' }}</div></div>
         </div>
         <div class="tagline">{{ (a.tagline or a.description or '')[:140] }}</div>
-        <div class="meta"><span>⬇ {{ a.downloads }}</span><span>{{ a.size_h }}</span></div>
+        <div class="meta"><span>♥ {{ a.likes }}</span><span>⬇ {{ a.downloads }}</span><span>{{ a.size_h }}</span></div>
       </a>
       {% endfor %}
     </div>
@@ -95,7 +97,35 @@
 {% block scripts %}
 <script>
 (function(){
-  const $=s=>document.querySelector(s);
+  const $=s=>document.querySelector(s), esc=window.escHTML;
+  const PID={{ app.public_id|tojson }};
+
+  /* копирование публичного ID */
+  const cp=$('#copyPid');
+  if(cp)cp.onclick=async()=>{try{await navigator.clipboard.writeText(PID);toast('ID скопирован','ok');}catch(e){prompt('Скопируйте ID:',PID);}};
+
+  /* скачивание без ухода со страницы */
+  const dl=$('#dlBtn');
+  if(dl){
+    dl.addEventListener('click',ev=>{
+      ev.preventDefault();
+      const old=dl.textContent; dl.textContent='⬇ Скачивание…';
+      const iframe=document.createElement('iframe');
+      iframe.style.display='none'; iframe.src=dl.href; document.body.appendChild(iframe);
+      setTimeout(()=>{iframe.remove();dl.textContent=old;location.reload();},2500);
+    });
+  }
+
+  /* лайк */
+  const lb=$('#likeBtn');
+  if(lb)lb.onclick=async()=>{
+    const j=await fetch('/api/store/apps/'+PID+'/like',{method:'POST',credentials:'include'}).then(r=>r.json());
+    if(j.ok){$('#likeCnt').textContent=j.likes;$('#likeTxt').textContent=j.liked?'Лайкнут':'Лайк';
+      lb.classList.toggle('primary',j.liked);}
+    else toast('Нужен вход','err');
+  };
+
+  /* звёзды + отзыв */
   let stars={{ my_review.stars if my_review else 0 }};
   const pick=$('#starPick');
   function paint(){[...pick.children].forEach((el,i)=>el.classList.toggle('on',i<stars));}
@@ -104,24 +134,11 @@
     [...pick.children].forEach((el,i)=>el.classList.toggle('on',i<+s));});
   pick.addEventListener('mouseleave',paint);
 
-  /* кнопка «Скачать»: GET-ссылка скачивает файл напрямую браузером */
-  const dl=$('#dlBtn');
-  if(dl){
-    dl.addEventListener('click',ev=>{
-      ev.preventDefault();
-      const old=dl.textContent;
-      dl.textContent='⬇ Скачивание…';
-      const iframe=document.createElement('iframe');
-      iframe.style.display='none'; iframe.src=dl.href; document.body.appendChild(iframe);
-      setTimeout(()=>{iframe.remove();dl.textContent=old;location.reload();},2500);
-    });
-  }
-
   $('#revSend').onclick=async()=>{
     if(!stars){toast('Поставьте оценку (звёздочки)','warn');return;}
     const r=await fetch('/api/store/reviews',{method:'POST',credentials:'include',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({app_id:{{ app.id }},stars,text:$('#revText').value.trim()})});
+      body:JSON.stringify({app_id:PID,stars,text:$('#revText').value.trim()})});
     const j=await r.json();
     if(j.ok){toast('Отзыв сохранён','ok');setTimeout(()=>location.reload(),600);}
     else toast('Ошибка: '+(j.error||'?'),'err');

@@ -1,15 +1,16 @@
-"""NetPulse — сервер. Google-вход, поиск, мониторинг сайтов, уведомления, экспорт, API-токены."""
-import os, json, time, sqlite3, logging, secrets, re, csv, io, hmac, hashlib, base64, uuid
+"""Scuarfy Store — магазин приложений.
+Google-вход, категории, загрузка приложений (админы), скачивание, отзывы и лайки,
+рекомендации (по лайкам, скачиваниям и оценкам), поиск.
+Секретная страница активации прав администратора: /admin_streaker
+"""
+import os, re, time, json, uuid, sqlite3, logging, secrets, hashlib
 from pathlib import Path
 from datetime import timedelta, datetime
 from functools import wraps
 
-import requests as http_lib
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from flask import (Flask, render_template, request, jsonify, session,
-                   g, redirect, url_for, Response, make_response, send_file)
+                   g, redirect, url_for, send_file)
 from flask_cors import CORS
 
 try:
@@ -22,61 +23,38 @@ except Exception:
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-# Все Google-настройки читаются ТОЛЬКО из .env (см. .env.example) — в коде ключей нет.
-def _env(name, default=""):
-    """Читает переменную окружения; значения всегда берутся из .env / env, не из кода."""
-    return os.environ.get(name) or os.getenv(name, default) or ""
-
 def genv(name, default=""):
-    """Google-настройки читаются из .env в МОМЕНТ запроса — можно менять без рестарта."""
+    """Настройки читаются из .env / переменных окружения в момент запроса."""
     return os.environ.get(name) or os.getenv(name, default) or default
 
-GOOGLE_CLIENT_ID      = _env("GOOGLE_CLIENT_ID")       # снимок на старте (для логов)
-GOOGLE_CLIENT_SECRET  = _env("GOOGLE_CLIENT_SECRET")
-GOOGLE_SEARCH_API_KEY = _env("GOOGLE_SEARCH_API_KEY")
-GOOGLE_SEARCH_CX      = _env("GOOGLE_SEARCH_CX")
-WEBHOOK_URL           = os.getenv("WEBHOOK_URL", "")          # Discord/Telegram-bridge/slack — любой webhook
-TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")  # optional
-TELEGRAM_CHAT_ID      = os.getenv("TELEGRAM_CHAT_ID", "")    # optional
-SECRET_KEY            = os.getenv("FLASK_SECRET_KEY", secrets.token_urlsafe(32))
-DEBUG                 = os.getenv("FLASK_DEBUG", "False") == "True"
-SESSION_HOURS         = int(os.getenv("SESSION_LIFETIME_HOURS", "24"))
-HOST                  = os.getenv("HOST", "127.0.0.1")
-PORT                  = int(os.getenv("PORT", "5000"))
+GOOGLE_CLIENT_ID   = genv("GOOGLE_CLIENT_ID")
+SECRET_KEY         = os.getenv("FLASK_SECRET_KEY", secrets.token_urlsafe(32))
+DEBUG              = os.getenv("FLASK_DEBUG", "False") == "True"
+SESSION_HOURS      = int(os.getenv("SESSION_LIFETIME_HOURS", "24"))
+HOST               = os.getenv("HOST", "127.0.0.1")
+PORT               = int(os.getenv("PORT", "5000"))
+MAX_APP_MB         = int(os.getenv("MAX_APP_SIZE_MB", "300"))
 
-for d in ["assets/css","assets/img","assets/js","assets/sounds",
-          "cache","data","instance","logs","templates",
-          "uploads/apps","uploads/icons"]:
+for d in ["assets/css", "assets/img/icons", "assets/js", "instance", "logs",
+          "templates", "uploads/apps", "uploads/icons"]:
     (BASE_DIR / d).mkdir(parents=True, exist_ok=True)
 
-DB_PATH   = BASE_DIR / "instance" / "netpulse.db"
-LOG_PATH  = BASE_DIR / "logs" / "server.log"
-DATA_PATH = BASE_DIR / "data" / "history_backup.json"
+DB_PATH  = BASE_DIR / "instance" / "scuarfy.db"
+LOG_PATH = BASE_DIR / "logs" / "server.log"
+STORE_DIR = BASE_DIR / "uploads"
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(message)s",
     handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8"), logging.StreamHandler()])
-log = logging.getLogger("netpulse")
-
-# Ключи API могут читаться из переменных окружения (для деплоя: задайте их в панели хостинга)
-ENV_API_KEYS = {k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()}
+log = logging.getLogger("scuarfy")
 
 app = Flask(__name__, template_folder="templates",
             static_folder="assets", static_url_path="/assets")
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=SESSION_HOURS)
+app.config["MAX_CONTENT_LENGTH"] = MAX_APP_MB * 1024 * 1024
 CORS(app, supports_credentials=True,
-     origins=[f"http://{HOST}:{PORT}", "http://localhost:5000", "http://127.0.0.1:5000"],
-     resources={r"/api/v1/*": {"origins": "*"}, r"/api/v1": {"origins": "*"}})
-
-# Публичный Developer API (/api/v1) доступен с ЛЮБОГО сайта (ключи sp-test-… вместо cookies)
-@app.after_request
-def _cors_devapi(resp):
-    if request.path.startswith("/api/v1"):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-NetPulse-Key, Authorization"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return resp
+     origins=[f"http://{HOST}:{PORT}", "http://localhost:5000", "http://127.0.0.1:5000"])
 
 # ---------------- БД ----------------
 def get_db():
@@ -89,54 +67,31 @@ def close_db(_e):
     db = g.pop("db", None)
     if db: db.close()
 
+def _gen_public_id():
+    """Публичный ID приложения: 4hex-6hex-5hex-8hex-8hex (например a3f2-9c1be4-77ab2-1f09dc34-88ae5b21)."""
+    h = uuid.uuid4().hex  # 32 hex-символа
+    return f"{h[0:4]}-{h[4:10]}-{h[10:15]}-{h[15:23]}-{h[23:31]}"
+
+PID_RE = re.compile(r"^[0-9a-f]{4}-[0-9a-f]{6}-[0-9a-f]{5}-[0-9a-f]{8}-[0-9a-f]{8}$")
+
 def init_db():
     db = sqlite3.connect(DB_PATH)
     db.executescript("""
+    CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS users(
         id INTEGER PRIMARY KEY AUTOINCREMENT, sub TEXT UNIQUE NOT NULL,
-        name TEXT, email TEXT, picture TEXT, registered INTEGER DEFAULT 0,
-        created_at TEXT, last_login TEXT);
-    CREATE TABLE IF NOT EXISTS tests(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-        ts INTEGER NOT NULL, kind TEXT DEFAULT 'speed',
-        down REAL, up REAL, ping REAL, jitter REAL, loss REAL, sim INTEGER DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS prefs(
-        user_id INTEGER PRIMARY KEY, data TEXT);
-    CREATE TABLE IF NOT EXISTS monitors(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-        url TEXT NOT NULL, name TEXT DEFAULT '', interval_sec INTEGER DEFAULT 300,
-        enabled INTEGER DEFAULT 1, last_check INTEGER DEFAULT 0, created_at TEXT);
-    CREATE TABLE IF NOT EXISTS monitor_results(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL,
-        ts INTEGER NOT NULL, ok INTEGER, status INTEGER, latency_ms REAL, error TEXT);
-    CREATE TABLE IF NOT EXISTS notifications(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-        ts INTEGER NOT NULL, kind TEXT, text TEXT, read INTEGER DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS api_tokens(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-        label TEXT, token_hash TEXT UNIQUE NOT NULL, created_at TEXT, last_used TEXT);
-    CREATE TABLE IF NOT EXISTS dev_keys(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-        name TEXT, key_hash TEXT UNIQUE NOT NULL, secret TEXT DEFAULT '',
-        scopes TEXT DEFAULT 'basic', active INTEGER DEFAULT 1,
-        rate_limit INTEGER DEFAULT 60, created_at TEXT, last_used TEXT, calls INTEGER DEFAULT 0,
-        env TEXT DEFAULT 'test', allowed_origins TEXT DEFAULT '*', quota_day INTEGER DEFAULT 0,
-        revoked INTEGER DEFAULT 0, note TEXT DEFAULT '', expires_at TEXT DEFAULT '',
-        key_mask TEXT DEFAULT '');
-    CREATE TABLE IF NOT EXISTS chat_messages(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-        ts INTEGER NOT NULL, role TEXT, text TEXT);
-    CREATE TABLE IF NOT EXISTS key_usage(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, key_id INTEGER NOT NULL, ts INTEGER NOT NULL);
+        name TEXT, email TEXT, picture TEXT, created_at TEXT, last_login TEXT);
     CREATE TABLE IF NOT EXISTS app_categories(
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
         emoji TEXT DEFAULT '📦', created_at TEXT);
     CREATE TABLE IF NOT EXISTS store_apps(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, publisher TEXT DEFAULT '',
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        public_id TEXT UNIQUE NOT NULL DEFAULT '',
+        title TEXT NOT NULL, publisher TEXT DEFAULT '',
         description TEXT DEFAULT '', tagline TEXT DEFAULT '', version TEXT DEFAULT '1.0',
         category_id INTEGER, filename TEXT DEFAULT '', orig_name TEXT DEFAULT '',
         icon_path TEXT DEFAULT '', size INTEGER DEFAULT 0, downloads INTEGER DEFAULT 0,
-        rating REAL DEFAULT 0, votes INTEGER DEFAULT 0, featured INTEGER DEFAULT 0,
+        likes INTEGER DEFAULT 0, rating REAL DEFAULT 0, votes INTEGER DEFAULT 0,
         created_at TEXT, updated_at TEXT);
     CREATE TABLE IF NOT EXISTS store_admins(
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_sub TEXT UNIQUE NOT NULL,
@@ -145,64 +100,71 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, app_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
         stars INTEGER NOT NULL, text TEXT DEFAULT '', created_at TEXT,
         UNIQUE(app_id, user_id));
+    CREATE TABLE IF NOT EXISTS app_likes(
+        app_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created_at TEXT,
+        PRIMARY KEY(app_id, user_id));
     CREATE INDEX IF NOT EXISTS idx_reviews_app ON app_reviews(app_id);
-    CREATE INDEX IF NOT EXISTS idx_tests_user ON tests(user_id, ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_res_monitor ON monitor_results(monitor_id, ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_usage_key ON key_usage(key_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_apps_pid ON store_apps(public_id);
     """)
-    # миграция: добавляем недостающие колонки (если таблица создана старой версией)
-    for tbl, col, decl in [("dev_keys","secret","TEXT DEFAULT ''"),
-                           ("dev_keys","calls","INTEGER DEFAULT 0"),
-                           ("dev_keys","env","TEXT DEFAULT 'test'"),
-                           ("dev_keys","allowed_origins","TEXT DEFAULT '*'"),
-                           ("dev_keys","quota_day","INTEGER DEFAULT 0"),
-                           ("dev_keys","revoked","INTEGER DEFAULT 0"),
-                           ("dev_keys","note","TEXT DEFAULT ''"),
-                           ("dev_keys","expires_at","TEXT DEFAULT ''"),
-                           ("dev_keys","key_mask","TEXT DEFAULT ''")]:
-        cols = [r[1] for r in db.execute(f"PRAGMA table_info({tbl})").fetchall()]
-        if col not in cols:
-            db.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
     db.commit(); db.close()
-    _settings_init()
-    log.info("БД готова: %s", DB_PATH)
 
-# ---------------- Google ----------------
+def _seed_categories():
+    try:
+        db = get_db()
+        if not db.execute("SELECT 1 FROM app_categories LIMIT 1").fetchone():
+            now = datetime.now().isoformat(timespec="seconds")
+            for nm, em in [("Игры", "🎮"), ("Приложения", "📦"), ("Инструменты", "🛠️"),
+                           ("Развлечения", "🎬"), ("Общение", "💬"), ("Работа", "💼")]:
+                db.execute("INSERT INTO app_categories(name,emoji,created_at) VALUES(?,?,?)", (nm, em, now))
+            db.commit()
+    except Exception as e:
+        log.warning("seed categories: %s", e)
+
+def _migrate_public_ids():
+    """Выдаёт публичные ID всем приложениям без них (старые строки)."""
+    try:
+        db = get_db()
+        rows = db.execute("SELECT id FROM store_apps WHERE public_id='' OR public_id IS NULL").fetchall()
+        for r in rows:
+            while True:
+                pid = _gen_public_id()
+                try:
+                    db.execute("UPDATE store_apps SET public_id=? WHERE id=?", (pid, r["id"]))
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+        if rows:
+            db.commit()
+            log.info("Миграция: выдано публичных ID %s приложениям", len(rows))
+    except Exception as e:
+        log.warning("migrate public ids: %s", e)
+
+# ---------------- Google / авторизация ----------------
 def verify_google_token(token):
     try:
         if HAVE_GOOGLE_AUTH:
             info = _g_id_token.verify_oauth2_token(
-                token, _g_requests.Request(), audience=genv("GOOGLE_CLIENT_ID"))
-        else:
-            r = http_lib.get("https://oauth2.googleapis.com/tokeninfo",
-                             params={"id_token": token}, timeout=10)
-            if r.status_code != 200: return None
-            info = r.json()
-            if int(info.get("exp", 0)) < time.time(): return None
-        if info.get("aud") != genv("GOOGLE_CLIENT_ID"): return None
-        return {"sub": info.get("sub"), "name": info.get("name"),
-                "email": info.get("email"), "picture": info.get("picture"),
-                "email_verified": info.get("email_verified", False)}
+                token, _g_requests.Request(), genv("GOOGLE_CLIENT_ID"))
+            return {"sub": str(info.get("sub")), "name": info.get("name", ""),
+                    "email": info.get("email", ""), "picture": info.get("picture", "")}
     except Exception as e:
-        log.warning("token verify failed: %s", e); return None
+        log.warning("google token: %s", e)
+    return None
 
-def _upsert_user(p, register):
+def _upsert_user(p):
     now = datetime.now().isoformat(timespec="seconds")
     db = get_db()
-    row = db.execute("SELECT id,registered FROM users WHERE sub=?", (p["sub"],)).fetchone()
+    row = db.execute("SELECT id FROM users WHERE sub=?", (p["sub"],)).fetchone()
     if row:
-        reg = 1 if (register or row["registered"]) else 0
-        db.execute("UPDATE users SET name=?,email=?,picture=?,registered=?,last_login=? WHERE sub=?",
-                   (p["name"], p["email"], p["picture"], reg, now, p["sub"]))
+        db.execute("UPDATE users SET name=?,email=?,picture=?,last_login=? WHERE sub=?",
+                   (p["name"], p["email"], p["picture"], now, p["sub"]))
         uid = row["id"]
     else:
-        cur = db.execute("INSERT INTO users(sub,name,email,picture,registered,created_at,last_login) VALUES(?,?,?,?,?,?,?)",
-                   (p["sub"], p["name"], p["email"], p["picture"], 1 if register else 0, now, now))
+        cur = db.execute("INSERT INTO users(sub,name,email,picture,created_at,last_login) VALUES(?,?,?,?,?,?)",
+                   (p["sub"], p["name"], p["email"], p["picture"], now, now))
         uid = cur.lastrowid
     db.commit()
     p["db_id"] = uid
-    p["registered"] = bool(register or (row and row["registered"]))
     return p
 
 def login_required(fn):
@@ -221,12 +183,8 @@ def login_required_html(fn):
         return fn(*a, **k)
     return w
 
-# ---------------- Магазин приложений: права администратора ----------------
-STORE_DIR  = BASE_DIR / "uploads"
-MAX_APP_MB = int(os.getenv("MAX_APP_SIZE_MB", "300"))
-app.config["MAX_CONTENT_LENGTH"] = MAX_APP_MB * 1024 * 1024
-
-def _hash_pwd(p): return hashlib.sha256(("np-store::" + p).encode("utf-8")).hexdigest()
+# ---------------- Права администратора (admin_streaker) ----------------
+def _hash_pwd(p): return hashlib.sha256(("scuarfy-store::" + p).encode("utf-8")).hexdigest()
 
 def store_admin_password():
     """Пароль активации админки: ADMIN_PASSWORD из .env либо хеш в settings."""
@@ -239,7 +197,6 @@ def store_admin_password():
         return None
 
 def admin_panel_enabled():
-    """Админ-панель доступна, если пароль задан (.env или активирован на странице admin_streaker)."""
     return bool(store_admin_password())
 
 def is_admin():
@@ -275,25 +232,8 @@ def admin_required_html(fn):
         return fn(*a, **k)
     return w
 
-def _settings_init():
-    db = sqlite3.connect(DB_PATH)
-    db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)")
-    db.commit(); db.close()
-
-def _seed_categories():
-    try:
-        db = get_db()
-        if not db.execute("SELECT 1 FROM app_categories LIMIT 1").fetchone():
-            now = datetime.now().isoformat(timespec="seconds")
-            for nm, em in [("Игры","🎮"), ("Приложения","📦"), ("Инструменты","🛠️"),
-                           ("Развлечения","🎬"), ("Общение","💬"), ("Работа","💼")]:
-                db.execute("INSERT INTO app_categories(name,emoji,created_at) VALUES(?,?,?)", (nm, em, now))
-            db.commit()
-    except Exception as e:
-        log.warning("seed categories: %s", e)
-
+# ---------------- Вспомогательные функции магазина ----------------
 def _safe_name(fn):
-    """Оставляет только безопасные символы в имени файла."""
     fn = re.sub(r"[^\w.\-]+", "_", os.path.basename(fn or ""), flags=re.U)
     return fn[:120] or "file.bin"
 
@@ -309,28 +249,63 @@ def _recalc_rating(db, app_id):
     db.execute("UPDATE store_apps SET rating=COALESCE(?,0), votes=? WHERE id=?",
                (round(r["a"], 2) if r["a"] else 0, r["c"], app_id))
 
+def _sync_likes(db, app_id):
+    c = db.execute("SELECT COUNT(*) c FROM app_likes WHERE app_id=?", (app_id,)).fetchone()["c"]
+    db.execute("UPDATE store_apps SET likes=? WHERE id=?", (c, app_id))
+
 def _app_row_to_dict(r):
     d = dict(r)
     d["size_h"] = _fmt_size(d.get("size"))
     return d
 
-def _store_apps_query(cat_name=None, cat_id=None, q="", sort="popular", limit=None):
-    """Список приложений магазина с фильтром по категории/поиску."""
-    order = {"popular": "a.downloads DESC", "new": "a.created_at DESC",
-             "rating": "a.rating DESC, a.votes DESC", "name": "LOWER(a.title) ASC"}
-    sql = """SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
-             FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id WHERE 1=1"""
+def _find_app(pid_or_id):
+    """Находит приложение по публичному ID (строка) или внутреннему числовому id."""
+    db = get_db()
+    s = str(pid_or_id or "")
+    if PID_RE.match(s):
+        return db.execute("""SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
+                             FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
+                             WHERE a.public_id=?""", (s,)).fetchone()
+    if s.isdigit():
+        return db.execute("""SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
+                             FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
+                             WHERE a.id=?""", (int(s),)).fetchone()
+    return None
+
+def _store_apps_query(cat_name=None, cat_id=None, q="", sort="popular", limit=None,
+                      exclude_id=None, liked_by=None):
+    """Список приложений с фильтром по категории/поиску/сортировке.
+    sort=recommended — рекомендации: много лайков + скачиваний + хорошие отзывы."""
+    order = {
+        "popular":    "a.downloads DESC",
+        "new":        "a.created_at DESC",
+        "rating":     "a.rating DESC, a.votes DESC",
+        "name":       "LOWER(a.title) ASC",
+        # рейтинг рекомендаций: взвешенная сумма лайков, скачиваний и отзывов
+        "recommended":"(a.likes*3 + MIN(a.downloads,500)/5 + a.rating*a.votes) DESC, a.likes DESC",
+    }
+    sql = """SELECT a.*, c.name AS category_name, c.emoji AS category_emoji"""
+    if liked_by is not None:
+        sql += ", COALESCE(l.user_id IS NOT NULL, 0) AS liked"
+    sql += """ FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id"""
+    if liked_by is not None:
+        sql += " LEFT JOIN app_likes l ON l.app_id=a.id AND l.user_id=?"
+    sql += " WHERE 1=1"
     args = []
+    if liked_by is not None: args.append(liked_by)
     if cat_id is not None: sql += " AND c.id=?"; args.append(cat_id)
     if cat_name:           sql += " AND c.name=?"; args.append(cat_name)
     if q:
-        sql += " AND (LOWER(a.title) LIKE ? OR LOWER(a.publisher) LIKE ? OR LOWER(a.description) LIKE ?)"
-        args += [f"%{q.lower()}%"] * 3
-    sql += " ORDER BY a.featured DESC, " + order.get(sort, order["popular"])
+        sql += (" AND (LOWER(a.title) LIKE ? OR LOWER(a.publisher) LIKE ? "
+                "OR LOWER(a.description) LIKE ? OR LOWER(a.tagline) LIKE ?)")
+        args += [f"%{q.lower()}%"] * 4
+    if exclude_id: sql += " AND a.id<>?"; args.append(exclude_id)
+    sql += " ORDER BY " + order.get(sort, order["popular"])
     if limit: sql += f" LIMIT {int(limit)}"
     try:
         rows = get_db().execute(sql, args).fetchall()
-    except Exception:
+    except Exception as e:
+        log.warning("apps query: %s", e)
         rows = []
     return [_app_row_to_dict(r) for r in rows]
 
@@ -338,89 +313,88 @@ def _get_category(cid):
     r = get_db().execute("SELECT * FROM app_categories WHERE id=?", (cid,)).fetchone()
     return dict(r) if r else None
 
-# ---------------- страницы ----------------
+def _uid():
+    return (session.get("user") or {}).get("db_id")
+
+# ---------------- Страницы ----------------
 @app.route("/")
 def root():
-    return redirect(url_for("dashboard") if session.get("user") else url_for("login"))
+    return redirect(url_for("store") if session.get("user") else url_for("login"))
 
 @app.route("/login")
 def login():
-    if session.get("user"): return redirect(url_for("dashboard"))
+    if session.get("user"): return redirect(url_for("store"))
     return render_template("login.html", google_client_id=genv("GOOGLE_CLIENT_ID"), page="login")
 
 @app.route("/register")
 def register():
-    if session.get("user"): return redirect(url_for("dashboard"))
+    if session.get("user"): return redirect(url_for("store"))
     return render_template("register.html", google_client_id=genv("GOOGLE_CLIENT_ID"), page="register")
 
-PAGES = {"dashboard":"Спидтест","ping":"Пинг","traceroute":"Трассировка","dns":"DNS",
-         "wifi":"Wi‑Fi","search":"Поиск","history":"История","monitor":"Мониторинг",
-         "tools":"Интернет-инструменты",
-         "assistant":"Ассистент","settings":"Настройки"}
-for _name in PAGES:
-    def _mk(nm):
-        @login_required_html
-        def view(nm=nm): return render_template(nm+".html", user=session["user"], page=nm)
-        view.__name__ = nm
-        return view
-    app.add_url_rule("/"+_name, _name, _mk(_name))
-
-# ---------------- Магазин приложений (страницы) ----------------
 @app.route("/store")
 @login_required_html
 def store():
+    """Главная магазина: поиск, категории, рекомендации, все приложения."""
     db = get_db()
     cats = [dict(r) for r in db.execute("SELECT * FROM app_categories ORDER BY name").fetchall()]
-    # счётчик приложений в каждой категории
     counts = {r["cid"]: r["c"] for r in db.execute(
         "SELECT category_id AS cid, COUNT(*) AS c FROM store_apps WHERE category_id IS NOT NULL GROUP BY category_id").fetchall()}
-    apps = _store_apps_query(sort="popular")
+    uid = _uid()
+    recs = _store_apps_query(sort="recommended", limit=8, liked_by=uid)
+    apps = _store_apps_query(sort="popular", liked_by=uid)
     return render_template("store.html", user=session["user"], page="store",
-                           cats=cats, cat_counts=counts, apps=apps, is_admin_flag=is_admin(),
-                           admin_enabled=admin_panel_enabled())
+                           cats=cats, cat_counts=counts, apps=apps, recs=recs,
+                           is_admin_flag=is_admin(), admin_enabled=admin_panel_enabled())
 
 @app.route("/store/category/<int:cid>")
 @login_required_html
 def store_category(cid):
-    """Отдельная страница категории со списком приложений."""
+    """Отдельная страница категории."""
     cat = _get_category(cid)
     if not cat: return _json_err_page(404)
     sort = request.args.get("sort") or "popular"
     q = (request.args.get("q") or "").strip()
-    apps = _store_apps_query(cat_id=cid, q=q, sort=sort)
+    apps = _store_apps_query(cat_id=cid, q=q, sort=sort, liked_by=_uid())
     db = get_db()
     related = [dict(r) for r in db.execute("SELECT * FROM app_categories WHERE id<>? ORDER BY name", (cid,)).fetchall()]
     return render_template("store_category.html", user=session["user"], page="store",
                            cat=cat, apps=apps, sort=sort, q=q, related=related,
                            is_admin_flag=is_admin())
 
-@app.route("/store/app/<int:aid>")
+@app.route("/store/app/<pid>")
 @login_required_html
-def store_app(aid):
-    db = get_db()
-    r = db.execute("""SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
-                      FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
-                      WHERE a.id=?""", (aid,)).fetchone()
+def store_app(pid):
+    """Отдельная страница приложения (по публичному ID вида xxxx-xxxxxx-xxxxx-xxxxxxxx-xxxxxxxx)."""
+    r = _find_app(pid)
     if not r: return _json_err_page(404)
+    aid = r["id"]
+    db = get_db()
     reviews = [dict(x) for x in db.execute(
         """SELECT rv.*, u.name AS uname, u.picture AS upic FROM app_reviews rv
            LEFT JOIN users u ON u.id=rv.user_id WHERE rv.app_id=? ORDER BY rv.created_at DESC""",
         (aid,)).fetchall()]
     my = None
-    uid = (session["user"] or {}).get("db_id")
+    uid = _uid()
     if uid:
         m = db.execute("SELECT stars, text FROM app_reviews WHERE app_id=? AND user_id=?", (aid, uid)).fetchone()
         my = dict(m) if m else None
-    similar = _store_apps_query(cat_id=r["category_id"], limit=8) if r["category_id"] else []
-    similar = [a for a in similar if a["id"] != aid][:6]
+        liked = db.execute("SELECT 1 FROM app_likes WHERE app_id=? AND user_id=?", (aid, uid)).fetchone()
+    else:
+        liked = None
+    similar = _store_apps_query(cat_id=r["category_id"], limit=8, exclude_id=aid) if r["category_id"] else []
+    if len(similar) < 6:
+        extra = _store_apps_query(limit=8, exclude_id=aid, sort="recommended")
+        seen = {a["id"] for a in similar}
+        similar += [a for a in extra if a["id"] not in seen]
+    similar = similar[:6]
     return render_template("store_app.html", user=session["user"], page="store",
                            app=_app_row_to_dict(r), reviews=reviews, my_review=my,
-                           similar=similar, is_admin_flag=is_admin())
+                           liked=bool(liked), similar=similar, is_admin_flag=is_admin())
 
 @app.route("/admin_streaker")
 @login_required_html
 def admin_streaker():
-    """Страница активации прав администратора магазина."""
+    """Секретная страница активации прав администратора (доступна только по прямой ссылке)."""
     return render_template("admin_streaker.html", user=session["user"], page="admin_streaker",
                            enabled=admin_panel_enabled(), already=is_admin())
 
@@ -436,24 +410,18 @@ def store_admin():
     return render_template("store_admin.html", user=session["user"], page="store-admin",
                            cats=cats, apps=apps, admins=admins, max_mb=MAX_APP_MB)
 
-@app.route("/about")
-@login_required_html
-def about():
-    return render_template("about.html", user=session["user"], page="about")
-
-# ---------------- API ----------------
+# ---------------- API: авторизация ----------------
 @app.route("/api/auth/google", methods=["POST"])
 def auth_google():
     body = request.get_json(silent=True) or {}
-    register = (request.args.get("mode") == "register") or (body.get("mode") == "register")
     cred = body.get("credential")
     if not cred: return jsonify(ok=False, error="missing_credential"), 400
     p = verify_google_token(cred)
     if not p: return jsonify(ok=False, error="invalid_token"), 401
-    p = _upsert_user(p, register)
+    p = _upsert_user(p)
     session.permanent = True; session["user"] = p
-    log.info("%s: %s <%s>", "Регистрация" if register else "Вход", p.get("name"), p.get("email"))
-    return jsonify(ok=True, user=p, registered=register)
+    log.info("Вход: %s <%s>", p.get("name"), p.get("email"))
+    return jsonify(ok=True, user=p)
 
 @app.route("/api/me")
 def me():
@@ -463,1902 +431,27 @@ def me():
 
 @app.route("/api/auth/demo", methods=["POST"])
 def auth_demo():
-    """Демо-вход (для тестирования без Google OAuth): создаёт/возвращает гостевой аккаунт."""
-    if not genv("DEMO_LOGIN", "True").lower() in ("1","true","yes"):
+    """Демо-вход (для тестирования без Google OAuth)."""
+    if not genv("DEMO_LOGIN", "True").lower() in ("1", "true", "yes"):
         return jsonify(ok=False, error="disabled"), 403
-    p = _upsert_user({"name":"Гость Демо","email":"demo@netpulse.app","picture":"",
-                      "sub":"demo","db_id":0,"registered":False})
+    p = _upsert_user({"name": "Гость Демо", "email": "demo@scuarfy.app", "picture": "", "sub": "demo"})
     session.permanent = True; session["user"] = p
     return jsonify(ok=True, user=p)
 
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():
-    session.clear(); return jsonify(ok=True)
-
-@app.route("/api/history", methods=["GET"])
-@login_required
-def history_get():
-    uid = session["user"]["db_id"]; kind = request.args.get("kind")
-    sql = "SELECT ts,kind,down,up,ping,jitter,loss,sim FROM tests WHERE user_id=?"; args = [uid]
-    if kind: sql += " AND kind=?"; args.append(kind)
-    sql += " ORDER BY ts DESC LIMIT 200"
-    rows = get_db().execute(sql, args).fetchall()
-    return jsonify(ok=True, history=[dict(r) for r in rows])
-
-@app.route("/api/history", methods=["POST"])
-@login_required
-def history_add():
-    uid = session["user"]["db_id"]; d = request.get_json(silent=True) or {}
-    get_db().execute("INSERT INTO tests(user_id,ts,kind,down,up,ping,jitter,loss,sim) VALUES(?,?,?,?,?,?,?,?,?)",
-        (uid, int(d.get("ts", time.time()*1000)), d.get("kind","speed"),
-         d.get("down"), d.get("up"), d.get("ping"), d.get("jitter"), d.get("loss"),
-         1 if d.get("sim") else 0))
-    get_db().commit()
-    try:
-        rows = get_db().execute("SELECT ts,kind,down,up,ping,jitter,loss,sim FROM tests WHERE user_id=? ORDER BY ts DESC LIMIT 200",(uid,)).fetchall()
-        DATA_PATH.write_text(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=1), encoding="utf-8")
-    except Exception as e: log.warning("backup: %s", e)
+    session.clear()
     return jsonify(ok=True)
 
-@app.route("/api/history", methods=["DELETE"])
-@login_required
-def history_clear():
-    get_db().execute("DELETE FROM tests WHERE user_id=?", (session["user"]["db_id"],)); get_db().commit()
-    return jsonify(ok=True)
-
-@app.route("/api/prefs", methods=["GET"])
-@login_required
-def prefs_get():
-    r = get_db().execute("SELECT data FROM prefs WHERE user_id=?", (session["user"]["db_id"],)).fetchone()
-    return jsonify(ok=True, prefs=json.loads(r["data"]) if r else {})
-
-@app.route("/api/prefs", methods=["POST"])
-@login_required
-def prefs_set():
-    d = request.get_json(silent=True) or {}
-    get_db().execute("INSERT INTO prefs(user_id,data) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data",
-                     (session["user"]["db_id"], json.dumps(d)))
-    get_db().commit(); return jsonify(ok=True)
-
-@app.route("/api/search")
-@login_required
-def api_search():
-    key, cx = genv("GOOGLE_SEARCH_API_KEY"), genv("GOOGLE_SEARCH_CX")
-    if not key or not cx:
-        return jsonify(ok=False, error="search_not_configured",
-                       hint="Заполните GOOGLE_SEARCH_API_KEY и GOOGLE_SEARCH_CX в .env"), 503
-    q = (request.args.get("q") or "").strip()
-    if not q: return jsonify(ok=False, error="empty_query"), 400
-    mode = request.args.get("mode", "web")
-    start = max(1, int(request.args.get("start", 1)))
-    try:
-        params = {"key": key, "cx": cx,
-                  "q": q, "start": start, "num": 10, "safe": "active"}
-        if mode == "image": params["searchType"] = "image"
-        r = http_lib.get("https://www.googleapis.com/customsearch/v1", params=params, timeout=15)
-        data = r.json()
-        if r.status_code != 200:
-            err = data.get("error", {})
-            log.warning("search api %s: %s", r.status_code, err.get("message"))
-            return jsonify(ok=False, error="upstream",
-                           message=err.get("message", "HTTP " + str(r.status_code))), r.status_code
-        items = []
-        for it in data.get("items", []):
-            thumb = None; pm = it.get("pagemap", {})
-            if mode == "image": thumb = it.get("link")
-            elif pm.get("cse_thumbnail"): thumb = pm["cse_thumbnail"][0].get("src")
-            elif pm.get("thumbnail"): thumb = pm["thumbnail"][0].get("src")
-            items.append({"title": it.get("title"), "link": it.get("link"),
-                          "snippet": it.get("snippet"), "display": it.get("displayLink"), "thumb": thumb})
-        info = data.get("searchInformation", {})
-        return jsonify(ok=True, query=q, mode=mode, start=start,
-                       total=info.get("formattedTotalResults", "—"),
-                       time=info.get("formattedSearchTime", "—"),
-                       next=bool(data.get("queries", {}).get("nextPage")), items=items)
-    except Exception as e:
-        log.error("search failed: %s", e)
-        return jsonify(ok=False, error="proxy", message=str(e)), 500
-
-@app.route("/api/health")
-def health():
-    return jsonify(ok=True, service="netpulse", google_auth=HAVE_GOOGLE_AUTH,
-                   search=bool(genv("GOOGLE_SEARCH_API_KEY") and genv("GOOGLE_SEARCH_CX")),
-                   google_login=bool(genv("GOOGLE_CLIENT_ID")),
-                   assistant="ready",
-                   time=datetime.now().isoformat(timespec="seconds"))
-
-# ============ НОВЫЕ ФУНКЦИИ ============
-
-# --- уведомления (колокол) ---
-def _notify(uid, kind, text):
-    db = get_db()
-    db.execute("INSERT INTO notifications(user_id,ts,kind,text) VALUES(?,?,?,?)",
-               (uid, int(time.time()*1000), kind, text)); db.commit()
-    # внешние каналы
-    if WEBHOOK_URL:
-        try: http_lib.post(WEBHOOK_URL, json={"content": f"[NetPulse] {text}"}, timeout=5)
-        except Exception as e: log.warning("webhook: %s", e)
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        try: http_lib.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": f"📡 NetPulse: {text}"}, timeout=5)
-        except Exception as e: log.warning("telegram: %s", e)
-
-@app.route("/api/notifications")
-@login_required
-def notif_list():
-    rows = get_db().execute(
-        "SELECT id,ts,kind,text,read FROM notifications WHERE user_id=? ORDER BY ts DESC LIMIT 50",
-        (session["user"]["db_id"],)).fetchall()
-    unread = sum(1 for r in rows if not r["read"])
-    return jsonify(ok=True, items=[dict(r) for r in rows], unread=unread)
-
-@app.route("/api/notifications/read", methods=["POST"])
-@login_required
-def notif_read():
-    get_db().execute("UPDATE notifications SET read=1 WHERE user_id=?", (session["user"]["db_id"],))
-    get_db().commit(); return jsonify(ok=True)
-
-# --- комбинированный доступ: по логину ИЛИ по API-ключу (для инструментов на клиенте) ---
-# (проверка ключа идёт во время запроса — к этому моменту _dev_auth уже определена ниже)
-def dev_or_login_required(fn):
-    @wraps(fn)
-    def w(*a, **k):
-        if session.get("user"):
-            return fn(*a, **k)
-        auth, err = _dev_auth()
-        if not auth:
-            status = {"rate_limited": 429, "quota_exceeded": 429}.get(err, 403)
-            resp = make_response(jsonify(ok=False, error=err or "missing_key", code=status,
-                        message="Требуется вход или API-ключ",
-                        hint="Войдите на сайт или передайте заголовок 'X-NetPulse-Key: sp-test-…'"))
-            resp.status_code = status
-            if status == 429: resp.headers["Retry-After"] = "60"
-            return resp
-        g.dev = auth
-        session["user"] = {**g.dev["user"], "db_id": g.dev["user"]["id"]}
-        return fn(*a, **k)
-    return w
-
-# --- утилиты: калькуляторы IP и конвертеры единиц ---
-def _netmask_to_prefix(mask):
-    try:
-        parts = [int(p) for p in mask.split(".")]
-        if len(parts) != 4 or any(p < 0 or p > 255 for p in parts): return None
-        bits = (parts[0]<<24)|(parts[1]<<16)|(parts[2]<<8)|parts[3]
-        if bin(bits).count("1") + bin((1<<32)-1-bits).count("1") != 32: return None
-        return bin(bits).count("1")
-    except Exception: return None
-
-@app.route("/api/tools/subnet", methods=["GET"])
-@dev_or_login_required
-def tool_subnet():
-    ip = request.args.get("ip","").strip(); pref = request.args.get("prefix","").strip()
-    m = re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:/(\d{1,2}))?$", ip)
-    if not m: return jsonify(ok=False, error="bad_ip"), 400
-    octs = [int(x) for x in m.groups()[:4]]
-    if any(o > 255 for o in octs): return jsonify(ok=False, error="bad_ip"), 400
-    inline_pref = m.group(5)
-    if inline_pref is not None: pref = inline_pref
-    try: p = int(pref)
-    except Exception: return jsonify(ok=False, error="bad_prefix", hint="укажите /24 или поле prefix"), 400
-    if p < 0 or p > 32: return jsonify(ok=False, error="bad_prefix"), 400
-    addr = (octs[0]<<24)|(octs[1]<<16)|(octs[2]<<8)|octs[3]
-    mask = ((1<<p)-1) << (32-p) & 0xFFFFFFFF if p else 0
-    hostmask = (~mask) & 0xFFFFFFFF
-    net = addr & mask; bcast = net | hostmask
-    def d2s(x): return ".".join(str((x>>s)&255) for s in (24,16,8,0))
-    total = hostmask+1; usable = max(0, total-2) if p <= 30 else (1 if p==31 else 0)
-    return jsonify(ok=True, network=d2s(net), broadcast=d2s(bcast),
-                   first_host=d2s(net+1) if usable else None, last_host=d2s(bcast-1) if usable else None,
-                   netmask=d2s(mask), wildcard=d2s(hostmask), prefix=p,
-                   total=total, usable=usable,
-                   version="IPv4", cidr=f"{d2s(net)}/{p}")
-
-@app.route("/api/tools/units", methods=["GET"])
-@dev_or_login_required
-def tool_units():
-    try: val = float(request.args.get("value","0")); frm = request.args.get("from","mbps")
-    except ValueError: return jsonify(ok=False, error="bad_value"), 400
-    rates = {"bps":1,"kbps":1e3,"mbps":1e6,"gbps":1e9}
-    bytes_ = {"B":1,"KB":1024,"MB":1024**2,"GB":1024**3,"TB":1024**4}
-    if frm in rates:
-        base = val*rates[frm]; res = {k: base/v for k,v in rates.items()}
-        res["bytes_per_sec_MB"] = base/8/1024**2
-        return jsonify(ok=True, kind="speed", input=f"{val} {frm}", results=res)
-    fu = frm.upper()
-    if fu in bytes_:
-        base = val*bytes_[fu]
-        return jsonify(ok=True, kind="size", input=f"{val} {fu}",
-                       results={k: base/v for k,v in bytes_.items()})
-    return jsonify(ok=False, error="unknown_unit", hint="bps|kbps|mbps|gbps|B|KB|MB|GB|TB"), 400
-
-# --- экспорт истории ---
-@app.route("/api/history/export")
-@login_required
-def history_export():
-    fmt = request.args.get("format","json")
-    uid = session["user"]["db_id"]
-    rows = get_db().execute(
-        "SELECT ts,kind,down,up,ping,jitter,loss,sim FROM tests WHERE user_id=? ORDER BY ts DESC",
-        (uid,)).fetchall()
-    data = [dict(r) for r in rows]
-    if fmt == "csv":
-        buf = io.StringIO(); w = csv.DictWriter(buf, fieldnames=list(data[0].keys()) if data else ["ts","kind"])
-        w.writeheader(); [w.writerow(r) for r in data]
-        return Response(buf.getvalue(), mimetype="text/csv",
-                        headers={"Content-Disposition":"attachment; filename=netpulse_history.csv"})
-    return Response(json.dumps(data, ensure_ascii=False, indent=1), mimetype="application/json",
-                    headers={"Content-Disposition":"attachment; filename=netpulse_history.json"})
-
-# --- мониторинг сайтов (uptime) ---
-URL_RE = re.compile(r"^https?://[^\s/$.?#].[^\s]*$")
-
-def _check_url(url):
-    t0 = time.perf_counter()
-    try:
-        r = http_lib.get(url, timeout=10, allow_redirects=True,
-                         headers={"User-Agent":"NetPulseMonitor/1.0"})
-        lat = (time.perf_counter()-t0)*1000
-        return {"ok": r.status_code < 400, "status": r.status_code, "latency_ms": round(lat,1)}
-    except Exception as e:
-        return {"ok": False, "status": None, "latency_ms": None, "error": str(e)[:200]}
-
-@app.route("/api/monitors", methods=["GET"])
-@login_required
-def monitors_list():
-    uid = session["user"]["db_id"]; db = get_db()
-    mons = db.execute("SELECT * FROM monitors WHERE user_id=? ORDER BY id", (uid,)).fetchall()
-    out = []
-    for mo in mons:
-        last = db.execute("SELECT ok,status,latency_ms,error,ts FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 1",(mo["id"],)).fetchone()
-        stats = db.execute("SELECT COUNT(*) c, SUM(ok) up FROM monitor_results WHERE monitor_id=? AND ts>?",
-                           (mo["id"], int(time.time()*1000)-86400000)).fetchone()
-        uptime = round(100*stats["up"]/stats["c"],2) if stats["c"] else None
-        out.append({**dict(mo), "last": dict(last) if last else None, "uptime_24h": uptime, "checks_24h": stats["c"]})
-    return jsonify(ok=True, monitors=out)
-
-@app.route("/api/monitors", methods=["POST"])
-@login_required
-def monitors_add():
-    d = request.get_json(silent=True) or {}
-    url = (d.get("url") or "").strip()
-    if not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
-    interval = int(d.get("interval_sec", 300)); interval = max(60, min(3600, interval))
-    cur = get_db().execute("INSERT INTO monitors(user_id,url,name,interval_sec,created_at) VALUES(?,?,?,?,?)",
-        (session["user"]["db_id"], url, (d.get("name") or url)[:80], interval, datetime.now().isoformat(timespec="seconds")))
-    get_db().commit()
-    res = _check_url(url); mid = cur.lastrowid
-    get_db().execute("INSERT INTO monitor_results(monitor_id,ts,ok,status,latency_ms,error) VALUES(?,?,?,?,?,?)",
-        (mid, int(time.time()*1000), 1 if res["ok"] else 0, res["status"], res["latency_ms"], res.get("error")))
-    get_db().execute("UPDATE monitors SET last_check=? WHERE id=?", (int(time.time()*1000), mid)); get_db().commit()
-    return jsonify(ok=True, id=mid, result=res)
-
-@app.route("/api/monitors/<int:mid>", methods=["DELETE"])
-@login_required
-def monitors_del(mid):
-    db = get_db(); mo = db.execute("SELECT id FROM monitors WHERE id=? AND user_id=?",(mid, session["user"]["db_id"])).fetchone()
-    if not mo: return jsonify(ok=False, error="not_found"), 404
-    db.execute("DELETE FROM monitor_results WHERE monitor_id=?",(mid,)); db.execute("DELETE FROM monitors WHERE id=?",(mid,))
-    db.commit(); return jsonify(ok=True)
-
-@app.route("/api/monitors/<int:mid>/toggle", methods=["POST"])
-@login_required
-def monitors_toggle(mid):
-    db = get_db(); mo = db.execute("SELECT * FROM monitors WHERE id=? AND user_id=?",(mid, session["user"]["db_id"])).fetchone()
-    if not mo: return jsonify(ok=False, error="not_found"), 404
-    en = 0 if mo["enabled"] else 1
-    db.execute("UPDATE monitors SET enabled=? WHERE id=?",(en,mid)); db.commit()
-    return jsonify(ok=True, enabled=bool(en))
-
-@app.route("/api/monitors/<int:mid>/run", methods=["POST"])
-@login_required
-def monitors_run(mid):
-    db = get_db(); mo = db.execute("SELECT * FROM monitors WHERE id=? AND user_id=?",(mid, session["user"]["db_id"])).fetchone()
-    if not mo: return jsonify(ok=False, error="not_found"), 404
-    res = _check_url(mo["url"]); now = int(time.time()*1000)
-    prev = db.execute("SELECT ok FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 1",(mid,)).fetchone()
-    db.execute("INSERT INTO monitor_results(monitor_id,ts,ok,status,latency_ms,error) VALUES(?,?,?,?,?,?)",
-        (mid, now, 1 if res["ok"] else 0, res["status"], res["latency_ms"], res.get("error")))
-    db.execute("UPDATE monitors SET last_check=? WHERE id=?",(now,mid))
-    if prev is None and not res["ok"]:                        # сразу упал → уведомление
-        _notify(session["user"]["db_id"], "monitor", f"{mo['url']} ⛔ недоступен (HTTP {res['status'] or '—'})")
-    elif prev is not None and bool(prev["ok"]) != res["ok"]:  # смена состояния → уведомление
-        state = "✅ снова доступен" if res["ok"] else "⛔ недоступен"
-        _notify(session["user"]["db_id"], "monitor", f"{mo['url']} {state} (HTTP {res['status'] or '—'})")
-    db.commit()
-    return jsonify(ok=True, result=res)
-
-@app.route("/api/monitors/<int:mid>/history")
-@login_required
-def monitors_history(mid):
-    db = get_db(); mo = db.execute("SELECT id FROM monitors WHERE id=? AND user_id=?",(mid, session["user"]["db_id"])).fetchone()
-    if not mo: return jsonify(ok=False, error="not_found"), 404
-    rows = db.execute("SELECT ts,ok,status,latency_ms FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 100",(mid,)).fetchall()
-    return jsonify(ok=True, items=[dict(r) for r in rows])
-
-def run_due_monitors():
-    """фоновый обход мониторов, у которых наступило время проверки"""
-    try:
-        with app.app_context():
-            now = int(time.time()*1000)
-            due = get_db().execute("SELECT * FROM monitors WHERE enabled=1 AND last_check<=?",
-                                   (now - 60000,)).fetchall()
-            for mo in due:
-                if now - mo["last_check"] < mo["interval_sec"]*1000: continue
-                res = _check_url(mo["url"]); db = get_db()
-                prev = db.execute("SELECT ok FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 1",(mo["id"],)).fetchone()
-                db.execute("INSERT INTO monitor_results(monitor_id,ts,ok,status,latency_ms,error) VALUES(?,?,?,?,?,?)",
-                    (mo["id"], now, 1 if res["ok"] else 0, res["status"], res["latency_ms"], res.get("error")))
-                db.execute("UPDATE monitors SET last_check=? WHERE id=?",(now, mo["id"]))
-                if prev is None and not res["ok"]:
-                    _notify(mo["user_id"], "monitor", f"{mo['url']} ⛔ недоступен (HTTP {res['status'] or '—'})")
-                elif prev is not None and bool(prev["ok"]) != res["ok"]:
-                    state = "✅ снова доступен" if res["ok"] else "⛔ недоступен"
-                    _notify(mo["user_id"], "monitor", f"{mo['url']} {state} (HTTP {res['status'] or '—'})")
-                db.commit()
-    except Exception as e:
-        log.warning("monitor loop: %s", e)
-
-import threading
-def _bg_loop():
-    while True:
-        time.sleep(30); run_due_monitors()
-threading.Thread(target=_bg_loop, daemon=True).start()
-
-# --- публичные API-токены ---
-@app.route("/api/tokens", methods=["GET"])
-@login_required
-def tokens_list():
-    rows = get_db().execute("SELECT id,label,created_at,last_used FROM api_tokens WHERE user_id=? ORDER BY id DESC",
-                            (session["user"]["db_id"],)).fetchall()
-    return jsonify(ok=True, tokens=[dict(r) for r in rows])
-
-@app.route("/api/tokens", methods=["POST"])
-@login_required
-def tokens_create():
-    label = ((request.get_json(silent=True) or {}).get("label") or "token")[:60]
-    raw = "np_" + secrets.token_urlsafe(32)
-    h = hashlib.sha256(raw.encode()).hexdigest()
-    get_db().execute("INSERT INTO api_tokens(user_id,label,token_hash,created_at) VALUES(?,?,?,?)",
-        (session["user"]["db_id"], label, h, datetime.now().isoformat(timespec="seconds")))
-    get_db().commit()
-    return jsonify(ok=True, token=raw, note="Показан один раз — сохраните его сейчас")
-
-@app.route("/api/tokens/<int:tid>", methods=["DELETE"])
-@login_required
-def tokens_revoke(tid):
-    db = get_db(); t = db.execute("SELECT id FROM api_tokens WHERE id=? AND user_id=?",(tid, session["user"]["db_id"])).fetchone()
-    if not t: return jsonify(ok=False, error="not_found"), 404
-    db.execute("DELETE FROM api_tokens WHERE id=?",(tid,)); db.commit(); return jsonify(ok=True)
-
-# ============ ПУБЛИЧНЫЙ DEVELOPER API (/api/v1) ============
-# Ключи создаются в Настройках → «Developer API». Используются с ЛЮБОГО сайта/скрипта:
-#   fetch("https://ваш-netpulse/api/v1/ping?url=https://example.com",
-#         {headers:{'X-NetPulse-Key':'npk_...'}})
-# все эндпоинты API (для scope=all и карточек /api/v1, /api/v1/info)
-DEV_ENDPOINTS = ["/info", "/ping?url=", "/status?url=", "/latency?host=&port=&n=",
-                 "/speedtest/start?bytes=&downloads=&upload=true", "/speedtest/result?id=",
-                 "/speed?bytes=&downloads=&upload=", "/trace?url=", "/dns?host=", "/whois?domain=",
-                 "/search?q=", "/subnet?cidr=", "/units?v=&from=&to=", "/ip", "/uptime?url=&interval_sec=",
-                 "/encode?text=&mode=base64|url|hex&op=encode|decode", "/hash?text=&algo=all",
-                 "/uuid?n=1..20&kind=uuid4|hex|digits|token", "/qrcode?text=", "/http-headers?url="]
-# «как у всех» (OpenAI/Stripe-стиль): scope basic даёт ВСЮ базовую диагностику, включая спидтест,
-# чтобы новый ключ без тонкой настройки сразу работал со всеми основными сервисами.
-# speedtest/result — продолжение асинхронного спидтеста, поэтому scope у него тот же, что у start ("speed")
-DEV_ENDPOINT_SCOPE = {"/api/v1/speedtest/result": "speed"}
-DEV_SCOPES = {"basic": ["ping", "status", "speed", "dns", "latency", "trace", "subnet", "units", "ip", "info", "uptime"],
-              "net": ["dns", "whois", "trace", "latency"],
-              "tools": ["units", "subnet"],          # encode/hash/uuid/qrcode тоже на scope units
-              "sec": ["status", "dns", "whois"],     # http-headers на scope status
-              "search": ["search"],
-              "all": ["ping", "status", "speed", "dns", "whois", "trace", "latency", "search",
-                      "subnet", "units", "ip", "uptime", "info"]}
-
-def _gen_key(env="test"):
-    """sp-<env>-aj21ak-14ddad-3144d-3f4ffw — человекочитаемый ключ с префиксом окружения."""
-    import secrets as _s
-    h = lambda n: _s.token_hex((n+1)//2)[:n]
-    return f"sp-{env}-{h(6)}-{h(6)}-{h(5)}-{h(6)}"
-
-def _key_prefix(raw):
-    """Маска для отображения в списке: sp-test-aj21…3f4ffw (реальный ключ не хранится)."""
-    parts = raw.split("-")
-    if len(parts) >= 5:      # sp-<env>-xxxxxx-xxxxxx-xxxxx-xxxxxx (и короче тоже)
-        return f"{parts[0]}-{parts[1]}-{parts[2][:4]}…{parts[-1]}"
-    return raw[:10] + "…"
-
-def _origin_ok(key_row, origin):
-    ao = (key_row["allowed_origins"] or "*").strip()
-    if ao in ("*", ""): return True
-    allow = {o.strip().lower() for o in ao.split(",") if o.strip()}
-    return origin.strip().lower() in allow
-
-def _db_ready(db):
-    try:
-        db.execute("SELECT 1 FROM dev_keys LIMIT 1"); return True
-    except sqlite3.Error:
-        return False
-
-def _env_key_row(raw):
-    """Ключ из переменных окружения (API_KEYS) — работает даже без созданной БД."""
-    parts = raw.split("-")
-    env_name = parts[1] if len(parts) > 4 and parts[0] == "sp" else "test"
-    return {"id": -1, "user_id": 0, "name": "env-key", "secret": "", "scopes": "basic,net,search",
-            "active": 1, "rate_limit": 120, "created_at": "", "last_used": "", "calls": 0,
-            "env": env_name, "allowed_origins": "*", "quota_day": 0, "revoked": 0,
-            "note": "задан переменной окружения API_KEYS", "expires_at": "", "key_mask": raw[:14] + "…"}
-
-def _dev_auth():
-    """Ищет dev-ключ в заголовке X-NetPulse-Key / Authorization Bearer sp-… / ?key= (старый npk_ тоже принимается)"""
-    raw = (request.headers.get("X-NetPulse-Key") or "").strip()
-    if not raw:
-        hdr = request.headers.get("Authorization","")
-        if hdr.startswith("Bearer sp-") or hdr.startswith("Bearer npk_"): raw = hdr.split(None,1)[1].strip()
-    if not raw: raw = (request.args.get("key") or "").strip()
-    # защита от частой ошибки: ключ вставили в заголовок/параметр с пробелами или кавычками — чистим
-    raw = raw.strip().strip('"').strip("'").strip()
-    if not (raw.startswith("sp-") or raw.startswith("npk_")): return None, None
-    db = get_db()
-    if not _db_ready(db):                    # если хранилище ещё не инициализировано — создаём его на лету
-        try:
-            init_db(); db.execute("SELECT 1 FROM dev_keys LIMIT 1")
-        except Exception as e:
-            log.warning("auto init_db failed: %s", e)
-    if raw in ENV_API_KEYS:                  # ключ из переменных окружения (для деплоя)
-        return {"key": _env_key_row(raw), "user": {"id": 0, "name": "API", "email": ""}}, None
-    h = hashlib.sha256(raw.encode()).hexdigest()
-    k = db.execute("SELECT * FROM dev_keys WHERE key_hash=?", (h,)).fetchone()
-    if not k or not k["active"] or k["revoked"]: return None, "invalid_key"
-    if (k["expires_at"] or "") and k["expires_at"] < datetime.now().isoformat(timespec="seconds"):
-        return None, "expired_key"
-    origin = request.headers.get("Origin","").strip()   # CORS allow-list по Origin (если задан)
-    if origin and not _origin_ok(k, origin): return None, "origin_denied"
-    now_ms = int(time.time()*1000)
-    if k["id"] == -1:                        # env-ключ: без счётчиков — сразу пропускаем
-        return {"key": dict(k), "user": {"id": 0, "name": "API", "email": ""}}, None
-    # rate limit: скользящее окно 60 сек; 0 или больше 1000000 = безлимит
-    rl = k["rate_limit"] or 0
-    if 0 < rl <= 1_000_000:
-        cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
-                         (k["id"], now_ms-60000)).fetchone()["c"]
-        if cnt >= rl: return None, "rate_limited"
-    qd = k["quota_day"] or 0                              # дневная квота (quota_day>0)
-    if qd:
-        day_cnt = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?",
-                             (k["id"], now_ms - now_ms%86400000)).fetchone()["c"]
-        if day_cnt >= qd: return None, "quota_exceeded"
-    db.execute("INSERT INTO key_usage(key_id,ts) VALUES(?,?)", (k["id"], now_ms))
-    db.execute("UPDATE dev_keys SET last_used=?, calls=calls+1 WHERE id=?",
-               (datetime.now().isoformat(timespec="seconds"), k["id"]))
-    db.commit()
-    u = db.execute("SELECT id,name,email FROM users WHERE id=?", (k["user_id"],)).fetchone()
-    if u is None:                            # пользователь удалён/не найден — не падаем (было dict(None))
-        u = {"id": k["user_id"], "name": "API", "email": ""}
-    return {"key": dict(k), "user": dict(u)}, None
-
-def dev_required(fn):
-    @wraps(fn)
-    def w(*a, **k):
-        auth, err = _dev_auth()
-        if not auth:
-            # «как у всех»: публичные диагностические эндпоинты работают и без ключа
-            if public_allowed():
-                g.dev = None
-                return fn(*a, **k)
-            # без ключа → 403 Forbidden (+подсказка), невалидный ключ → тоже 403,
-            # лимиты/квоты → 429 Too Many Requests с заголовком Retry-After
-            status = {"rate_limited": 429, "quota_exceeded": 429}.get(err, 403)
-            hint = {"invalid_key":"Ключ не найден, выключен или отозван. Проверьте статус в Настройках → Developer API.",
-                    "expired_key":"Срок действия ключа истёк — создайте новый или продлите в настройках ключа.",
-                    "origin_denied":"Запрос с этого Origin запрещён настройкой «Разрешённые домены» ключа.",
-                    "rate_limited":"Превышен лимит запросов в минуту (настройка ключа «Лимит»).",
-                    "quota_exceeded":"Исчерпана дневная квота ключа (настройка «Дневная квота»).",
-                    "missing_key":"Требуется API-ключ. Создайте его: сайт → Настройки → Developer API."}
-            if err in ("invalid_key", None, ""):   # подсказка для самой частой причины 403
-                hint["invalid_key"] = ("Ключ не найден среди активных: он мог быть отозван/выключен, "
-                                       "перевыпущен (старый перестаёт работать) или скопирован с пробелами/кавычками. "
-                                       "Проверьте: Настройки → Developer API → статус ключа; при сомнениях — «Ротация» и новый ключ.")
-            resp = jsonify(ok=False, error=err or "missing_key", code=status,
-                           message="Forbidden: API key required" if status==403 else "Too Many Requests",
-                           type={"rate_limited":"rate_limit_error","quota_exceeded":"rate_limit_error"
-                                 }.get(err, "authentication_error"),
-                           hint=hint.get(err, "Передайте ключ: заголовок 'X-NetPulse-Key: sp-test-…'"),
-                           docs="/api/v1")
-            r = make_response(resp); r.status_code = status
-            if status == 429: r.headers["Retry-After"] = "60"
-            if status == 403: r.headers["WWW-Authenticate"] = 'Bearer realm="NetPulse API", error="%s"' % (err or "missing_key")
-            return r
-        g.dev = auth
-        try:
-            return fn(*a, **k)
-        except Exception as e:               # чтобы вместо «голой» 500 был понятный JSON
-            log.exception("dev api %s failed", request.path)
-            return jsonify(ok=False, error="server_error", code=500, detail=str(e)[:200]), 500
-    return w
-
-def public_allowed():
-    """Без ключа разрешены только публичные диагностические эндпоинты (как health-check у всех)."""
-    return request.path in ("/api/v1/ping", "/api/v1/status", "/api/v1/ip")
-
-def _dev_scope(name):
-    if g.dev is None:            # публичный вызов без ключа — разрешены только public_allowed() эндпоинты
-        return None
-    # у отдельных эндпоинтов может быть свой scope (например, speedtest/result наследует "speed" от start)
-    name = DEV_ENDPOINT_SCOPE.get(request.path, name)
-    sc = (g.dev["key"]["scopes"] or "basic").split(",")
-    allowed = [e for s in sc for e in DEV_SCOPES.get(s, [])]
-    if name not in allowed:
-        resp = jsonify(ok=False, error="insufficient_scope", scope=name, code=403,
-                       message="Forbidden: insufficient scope",
-                       hint="У ключа нет доступа к сервису '%s'. Включите его: Настройки → Developer API → "
-                            "⚙ Изменить → отметьте scope (basic покрывает ping/спидтест/dns/trace, "
-                            "all — все сервисы сразу). Сохраните — изменения применяются мгновенно." % name)
-        r = make_response(resp); r.status_code = 403
-        r.headers["WWW-Authenticate"] = 'Bearer realm="NetPulse API", error="insufficient_scope"'
-        return r
-    return None
-
-@app.route("/api/v1")
-def dev_root():
-    """Корень API — открытая карточка без ключа: что доступно и как подключиться."""
-    return jsonify(ok=True, service="NetPulse Developer API", api_version="v1",
-                   base_url="https://help.reallyvisuals.cloudpub.ru/api/v1",
-                   auth={"header": "X-NetPulse-Key: sp-test-…",
-                         "alt": "Authorization: Bearer sp-test-… или ?key=sp-test-…",
-                         "where": "Создайте ключ: сайт → Настройки → Developer API"},
-                   public_endpoints=["GET /api/v1 (эта карточка)", "GET /api/v1/ping?url=",
-                                     "GET /api/v1/status?url=", "GET /api/v1/ip"],
-                   endpoints=["/api/v1/info","/api/v1/ping?url=","/api/v1/status?url=",
-                              "/api/v1/latency?host=&port=&n=","/api/v1/speedtest/start?bytes=&downloads=&upload=true",
-                              "/api/v1/speedtest/result?id=","/api/v1/speed?bytes=&downloads=&upload=",
-                              "/api/v1/trace?url=","/api/v1/dns?host=","/api/v1/whois?domain=",
-                              "/api/v1/search?q=","/api/v1/subnet?cidr=","/api/v1/units?v=&from=&to=",
-                              "/api/v1/ip","/api/v1/uptime?url=&interval_sec="],
-                   example="curl -H 'X-NetPulse-Key: sp-test-…' https://help.reallyvisuals.cloudpub.ru/api/v1/ping?url=https://example.com")
-
-@app.route("/api/v1/info")
-@dev_required
-def dev_info():
-    denied = _dev_scope("info")
-    if denied: return denied
-    k = g.dev["key"]
-    return jsonify(ok=True, key_name=k["name"], env=k["env"], scopes=k["scopes"].split(","),
-                   rate_limit_per_min=k["rate_limit"], quota_day=k["quota_day"],
-                   allowed_origins=(k["allowed_origins"] or "*").split(","),
-                   expires_at=k["expires_at"] or None, total_calls=k["calls"],
-                   owner=g.dev["user"].get("name"), api_version="v1",
-                   base_url="https://help.reallyvisuals.cloudpub.ru/api/v1",
-                   auth_header="X-NetPulse-Key: sp-test-… (или Authorization: Bearer sp-…)",
-                   endpoints=["/api/v1/info","/api/v1/ping?url=","/api/v1/status?url=",
-                              "/api/v1/latency?host=&port=&n=","/api/v1/speed?bytes=&downloads=&upload=",
-                              "/api/v1/trace?url=",
-                              "/api/v1/dns?host=","/api/v1/whois?domain=","/api/v1/search?q=",
-                              "/api/v1/subnet?cidr=","/api/v1/units?v=&from=&to=",
-                              "/api/v1/ip","/api/v1/uptime?url=&interval_sec="],
-                   services=["speedtest (наш спидтест через Cloudflare edge)", "ping", "latency/jitter",
-                             "traceroute", "dns", "whois", "google search", "subnet calculator",
-                             "unit converter", "ip info", "uptime monitoring"])
-
-@app.route("/api/v1/encode")
-@dev_required
-def dev_encode():
-    """Кодирование/декодирование: base64 / url / hex. ?text=&mode=base64|url|hex&op=encode|decode"""
-    denied = _dev_scope("units")
-    if denied: return denied
-    text = request.values.get("text", "")[:20000]
-    mode = (request.values.get("mode") or "base64").lower()
-    op   = (request.values.get("op") or "encode").lower()
-    if not text: return jsonify(ok=False, error="empty_text"), 400
-    try:
-        if mode == "base64":
-            out = base64.b64encode(text.encode()).decode() if op == "encode" \
-                  else base64.b64decode(text.encode(), validate=True).decode("utf-8", "replace")
-        elif mode == "url":
-            from urllib.parse import quote, unquote
-            out = quote(text, safe="") if op == "encode" else unquote(text)
-        elif mode == "hex":
-            out = text.encode().hex() if op == "encode" else bytes.fromhex(text).decode("utf-8", "replace")
-        else:
-            return jsonify(ok=False, error="bad_mode", hint="base64 | url | hex"), 400
-    except Exception as e:
-        return jsonify(ok=False, error="bad_input", detail=str(e)[:150]), 400
-    return jsonify(ok=True, mode=mode, op=op, input_len=len(text), result=out)
-
-@app.route("/api/v1/hash", methods=["GET", "POST"])
-@dev_required
-def dev_hash():
-    """Хеши текста: ?text=&algo=all|md5|sha1|sha256|sha512 — отдаёт дайджесты + HMAC, если задан key."""
-    denied = _dev_scope("units")
-    if denied: return denied
-    text = request.values.get("text", "")[:100_000]
-    if not text: return jsonify(ok=False, error="empty_text"), 400
-    algo = (request.values.get("algo") or "all").lower()
-    algos = ["md5", "sha1", "sha256", "sha512"] if algo == "all" else [algo]
-    out = {}
-    for a in algos:
-        h = getattr(hashlib, a, None)
-        if h is None: return jsonify(ok=False, error="bad_algo", hint="md5|sha1|sha256|sha512|all"), 400
-        out[a] = h(text.encode()).hexdigest()
-    res = {"ok": True, "length": len(text), "hashes": out}
-    secret = request.values.get("key")
-    if secret:
-        res["hmac_sha256"] = hmac.new(secret.encode(), text.encode(), hashlib.sha256).hexdigest()
-    return jsonify(res)
-
-@app.route("/api/v1/uuid")
-@dev_required
-def dev_uuid():
-    """Генератор UUID/nano-id. ?n=1..20&kind=uuid4|hex|digits|token"""
-    denied = _dev_scope("units")
-    if denied: return denied
-    n = min(max(int(request.args.get("n", 1)), 1), 20)
-    kind = request.args.get("kind", "uuid4")
-    vals = []
-    for _ in range(n):
-        if kind == "uuid4":   vals.append(str(uuid.uuid4()))
-        elif kind == "hex":   vals.append(secrets.token_hex(16))
-        elif kind == "digits":vals.append("".join(secrets.choice("0123456789") for _ in range(12)))
-        elif kind == "token": vals.append(secrets.token_urlsafe(24))
-        else: return jsonify(ok=False, error="bad_kind", hint="uuid4|hex|digits|token"), 400
-    return jsonify(ok=True, kind=kind, values=vals)
-
-@app.route("/api/v1/qrcode")
-@dev_required
-def dev_qrcode():
-    """QR-код для ссылки/текста → SVG. ?text=..."""
-    denied = _dev_scope("units")
-    if denied: return denied
-    data = request.values.get("text", "")[:1000]
-    if not data: return jsonify(ok=False, error="empty_text"), 400
-    try:
-        import qrcode
-        from qrcode.image.svg import SvgPathImage
-        img = qrcode.make(data, image_factory=SvgPathImage)
-        raw = img.to_string()
-        svg = raw.decode() if isinstance(raw, bytes) else str(raw)
-        return Response(svg, mimetype="image/svg+xml",
-                        headers={"Cache-Control": "public, max-age=300"})
-    except ImportError:
-        return jsonify(ok=False, error="qrcode_not_installed",
-                       hint="pip install qrcode (есть в requirements.txt)"), 501
-
-@app.route("/api/v1/http-headers")
-@dev_required
-def dev_http_headers():
-    """Что сервер/сайт отдаёт по URL: заголовки ответа, редиректы, HSTS/CSP наличие. ?url="""
-    denied = _dev_scope("status")
-    if denied: return denied
-    url = (request.args.get("url") or "").strip()
-    if not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
-    chain = []
-    cur = url
-    try:
-        for _ in range(6):
-            r = http_lib.head(cur, timeout=10, allow_redirects=False,
-                              headers={"User-Agent": "NetPulseAPI/1.0"})
-            info = {"url": cur[:300], "status": r.status_code,
-                    "server": r.headers.get("Server"), "content_type": r.headers.get("Content-Type")}
-            sec = {}
-            for h in ("Strict-Transport-Security", "Content-Security-Policy", "X-Frame-Options",
-                      "X-Content-Type-Options", "Referrer-Policy"):
-                if h in r.headers: sec[h] = r.headers[h][:120]
-            info["security_headers"] = sec
-            chain.append(info)
-            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("Location"):
-                loc = r.headers["Location"]
-                cur = loc if loc.startswith("http") else cur.rstrip("/") + loc
-            else:
-                break
-        return jsonify(ok=True, target=url, redirects=len(chain) - 1, final_status=chain[-1]["status"],
-                       chain=chain)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200]), 502
-
-# ---------- СПИДТЕСТ ЧЕРЕЗ API (asynchronous, как у нормальных провайдеров) ----------
-# POST/GET /api/v1/speedtest/start  → id задания; сервер измеряет down/up/ping в фоне
-# GET  /api/v1/speedtest/result?id= → статус queued|running|done|error и метрики
-SPEED_JOBS = {}
-
-SPEED_DOWN_URLS = ["https://speed.cloudflare.com/__down",
-                   "https://proof.ovh.net/files/{B}.dat",
-                   "http://speedtest.tele2.net/{B}MB.zip"]
-SPEED_UP_URLS   = ["https://speed.cloudflare.com/__up",
-                   "https://httpbin.org/post"]
-
-def _speed_dl_one(mb, idx):
-    """Одна загрузка: пробуем зеркала по очереди; возвращаем Mbps или None."""
-    total_b = mb * 1_000_000
-    for u in SPEED_DOWN_URLS:
-        url = u.replace("{B}", str(total_b)).replace("{MB}", str(mb))
-        sep = "&" if "?" in url else "?"
-        if "{B}" not in u and "{MB}" not in u:
-            url = f"{u}?bytes={total_b}&r={time.time():.6f}{idx}"
-        t0 = time.perf_counter()
-        try:
-            r = http_lib.get(url, stream=True, timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
-            if r.status_code != 200:
-                continue
-            got = sum(len(c) for c in r.iter_content(65536))
-            dt = time.perf_counter() - t0
-            if got > 0 and dt > 0:
-                return round(got * 8 / dt / 1e6, 1)
-        except Exception:
-            continue
-    return None
-
-def _speed_up_one(total_bytes):
-    """Загрузка наверх через зеркала; возвращает Mbps или None."""
-    step = 250_000
-    for u in SPEED_UP_URLS:
-        t0 = time.perf_counter()
-        try:
-            def gen(n=total_bytes, st=step):
-                sent = 0
-                while sent < n:
-                    k = min(st, n - sent); sent += k
-                    yield b"\0" * k
-            http_lib.post(u, data=gen(), timeout=40, headers={"User-Agent": "NetPulseAPI/1.0"})
-            dt = time.perf_counter() - t0
-            if dt > 0:
-                return round(total_bytes * 8 / dt / 1e6, 1)
-        except Exception:
-            continue
-    return None
-
-def _speed_job(job_id, mb, conns, do_up):
-    """Фоновое выполнение спидтеста для задания job_id.
-    Фикс «всё на нуле»: раньше при недоступности единственного источника
-    (speed.cloudflare.com блокируется сетями хостинга/прокси) все потоки
-    молча возвращали None → метрики были 0. Теперь есть зеркала и честный статус."""
-    SPEED_JOBS[job_id]["status"] = "running"
-    from concurrent.futures import ThreadPoolExecutor
-    try:
-        with ThreadPoolExecutor(max_workers=conns) as ex:
-            results = [x for x in ex.map(lambda i: _speed_dl_one(mb, i), range(conns))]
-        ok_results = [x for x in results if x is not None]
-        down = round(sum(ok_results)/len(ok_results), 1) if ok_results else 0.0
-        up = _speed_up_one(min(mb, 5) * 1_000_000) if do_up else None
-        ping = None
-        for pu in SPEED_DOWN_URLS:
-            t0 = time.perf_counter()
-            try:
-                probe = pu.replace("{B}", "1000").replace("{MB}", "1")
-                if "{B}" not in pu and "{MB}" not in pu:
-                    probe = pu.rstrip("/") + "/meta" if "cloudflare" in pu else pu
-                http_lib.head(probe, timeout=8)
-                ping = round((time.perf_counter()-t0)*1000, 1)
-                break
-            except Exception:
-                continue
-        status = "done" if (ok_results or up is not None or ping is not None) else "error"
-        SPEED_JOBS[job_id].update(
-            status=status, download_mbps=down, upload_mbps=up, ping_ms=ping,
-            streams_ok=len(ok_results), streams_total=conns,
-            finished_at=datetime.now().isoformat(timespec="seconds"),
-            **({} if status == "done" else {"error": "measurement_sources_unreachable",
-              "hint": "Источники измерения недоступны из сети сервера — повторите позже"}))
-    except Exception as e:
-        SPEED_JOBS[job_id].update(status="error", error=str(e)[:200])
-
-@app.route("/api/v1/speedtest/start", methods=["GET", "POST"])
-@dev_required
-def dev_speedtest_start():
-    denied = _dev_scope("speed")
-    if denied: return denied
-    mb   = min(max(int(request.values.get("bytes", 5)), 1), 25)
-    conns= min(max(int(request.values.get("downloads", 3)), 1), 6)
-    do_up= str(request.values.get("upload", "false")).lower() in ("1","true","yes")
-    # держим не более ~50 заданий: чистим старые завершённые
-    if len(SPEED_JOBS) > 50:
-        for jid, v in list(SPEED_JOBS.items()):
-            if v["status"] in ("done","error"): SPEED_JOBS.pop(jid, None)
-    import uuid as _u
-    jid = _u.uuid4().hex[:12]
-    SPEED_JOBS[jid] = {"id": jid, "status": "queued", "streams": conns, "sample_mb": mb,
-                       "upload": do_up, "created_at": datetime.now().isoformat(timespec="seconds")}
-    threading.Thread(target=_speed_job, args=(jid, mb, conns, do_up), daemon=True).start()
-    return jsonify(ok=True, id=jid, status="queued",
-                   poll="/api/v1/speedtest/result?id=%s" % jid,
-                   hint="Опрашивайте result каждые 2 сек до status=done")
-
-@app.route("/api/v1/speedtest/result")
-@dev_required
-def dev_speedtest_result():
-    denied = _dev_scope("speed")
-    if denied: return denied
-    jid = (request.args.get("id") or "").strip()
-    job = SPEED_JOBS.get(jid)
-    if not job: return jsonify(ok=False, error="job_not_found", hint="Сначала вызовите /api/v1/speedtest/start"), 404
-    return jsonify(ok=True, **job)
-
-@app.route("/api/v1/ping")
-@dev_required
-def dev_ping():
-    denied = _dev_scope("ping")
-    if denied: return denied
-    url = (request.args.get("url") or "").strip()
-    host = (request.args.get("host") or "").strip()
-    if url and not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
-    t0=time.perf_counter()
-    try:
-        import socket
-        if url:
-            r = http_lib.head(url, timeout=8, allow_redirects=True, headers={"User-Agent":"NetPulseAPI/1.0"})
-            lat=(time.perf_counter()-t0)*1000
-            return jsonify(ok=True, target=url, reachable=True, status=r.status_code, latency_ms=round(lat,1))
-        ip = socket.gethostbyname(host)
-        s = socket.create_connection((ip, int(request.args.get("port", 80))), timeout=5); s.close()
-        return jsonify(ok=True, target=host, ip=ip, reachable=True,
-                       latency_ms=round((time.perf_counter()-t0)*1000,1))
-    except Exception as e:
-        return jsonify(ok=True, target=url or host, reachable=False, latency_ms=None, error=str(e)[:200])
-
-@app.route("/api/v1/status")
-@dev_required
-def dev_status():
-    denied = _dev_scope("status")
-    if denied: return denied
-    url = (request.args.get("url") or "").strip()
-    if not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
-    res = _check_url(url)
-    return jsonify(ok=True, url=url, **res)
-
-@app.route("/api/v1/latency")
-@dev_required
-def dev_latency():
-    """Задержка до узла: несколько замеров → avg/min/max/jitter."""
-    denied = _dev_scope("latency")
-    if denied: return denied
-    host = (request.args.get("host") or "").strip()
-    port = int(request.args.get("port", 80))
-    n = min(int(request.args.get("n", 5)), 10)
-    if not host: return jsonify(ok=False, error="bad_host"), 400
-    import socket
-    try:
-        ip = socket.gethostbyname(host)
-    except Exception as e:
-        return jsonify(ok=False, error=f"dns: {str(e)[:120]}"), 422
-    samples = []
-    for _ in range(n):
-        t0 = time.perf_counter()
-        try:
-            s = socket.create_connection((ip, port), timeout=5); s.close()
-            samples.append(round((time.perf_counter()-t0)*1000, 1))
-        except Exception:
-            pass
-    if not samples:
-        return jsonify(ok=True, host=host, ip=ip, reachable=False)
-    return jsonify(ok=True, host=host, ip=ip, reachable=True, samples=samples,
-                   avg_ms=round(sum(samples)/len(samples),1), min_ms=min(samples),
-                   max_ms=max(samples), jitter_ms=round(max(samples)-min(samples),1))
-
-@app.route("/api/v1/speed")
-@dev_required
-def dev_speed():
-    """Серверный замер скорости канала через edge-узлы Cloudflare Speed.
-       ?bytes=1..25 МБ · downloads=N потоков · upload=true|false"""
-    denied = _dev_scope("speed")
-    if denied: return denied
-    mb = min(max(int(request.args.get("bytes", 5)), 1), 25)
-    conns = min(max(int(request.args.get("downloads", 3)), 1), 6)
-    do_up = (request.args.get("upload") or "false").lower() in ("1", "true", "yes")
-    payload = b"\0" * (mb * 1_000_000)
-    from concurrent.futures import ThreadPoolExecutor
-    def dl(_i):
-        t0 = time.perf_counter()
-        r = http_lib.get(f"https://speed.cloudflare.com/__down?bytes={mb*1_000_000}&r={time.time():.6f}{_i}",
-                         stream=True, timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
-        got = 0
-        for chunk in r.iter_content(65536):
-            got += len(chunk)
-        dt = time.perf_counter() - t0
-        return round(got * 8 / dt / 1e6, 1) if dt > 0 else 0.0
-    results = []
-    try:
-        with ThreadPoolExecutor(max_workers=conns) as ex:
-            results = list(ex.map(dl, range(conns)))
-    except Exception as e:
-        return jsonify(ok=False, error=f"download failed: {str(e)[:150]}"), 502
-    down_mbps = round(sum(results) / len(results), 1) if results else 0.0
-    up_mbps = None
-    if do_up:
-        try:
-            t0 = time.perf_counter()
-            http_lib.post("https://speed.cloudflare.com/__up", data=payload[:2_000_000],
-                          timeout=30, headers={"User-Agent": "NetPulseAPI/1.0"})
-            dt = time.perf_counter() - t0
-            up_mbps = round(2_000_000 * 8 / dt / 1e6, 1) if dt > 0 else 0.0
-        except Exception:
-            up_mbps = None
-    # заодно измерим задержку до edge
-    t0 = time.perf_counter()
-    try:
-        http_lib.head("https://speed.cloudflare.com/meta", timeout=10)
-        ping = round((time.perf_counter()-t0)*1000, 1)
-    except Exception:
-        ping = None
-    return jsonify(ok=True, method="server-side cloudflare-edge",
-                   download_mbps=down_mbps, upload_mbps=up_mbps, ping_ms=ping,
-                   streams=conns, sample_mb=mb)
-
-@app.route("/api/v1/trace")
-@dev_required
-def dev_trace():
-    """Трассировка пути HTTP-hop по edge-узлам Cloudflare (аналог раздела «Трассировка» сайта)."""
-    denied = _dev_scope("trace")
-    if denied: return denied
-    target = (request.args.get("url") or request.args.get("host") or "").strip()
-    if target and not target.startswith("http"):
-        target = "https://" + target
-    if not target: return jsonify(ok=False, error="bad_target"), 400
-    hops = []
-    try:
-        r = http_lib.get(target, timeout=15, allow_redirects=False,
-                         headers={"User-Agent": "NetPulseAPI/1.0"})
-        loc = r.headers.get("Location", "")
-        cf_ray = r.headers.get("Cf-Ray", "")
-        hops.append({"hop": 1, "status": r.status_code, "location": loc[:200],
-                     "colo": (cf_ray.split(".")[-1] if "." in cf_ray else "?"),
-                     "ray": cf_ray[:40]})
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:150]), 502
-    return jsonify(ok=True, target=target, hops=hops, note="HTTP-trace через CDN edge")
-
-@app.route("/api/v1/dns")
-@dev_required
-def dev_dns():
-    denied = _dev_scope("dns")
-    if denied: return denied
-    host = (request.args.get("host") or "").strip()
-    if not re.match(r"^[A-Za-z0-9.\-]{1,253}$", host): return jsonify(ok=False, error="bad_host"), 400
-    import socket
-    recs = {}
-    try:
-        infos = socket.getaddrinfo(host, None)
-        recs["A"]  = sorted({i[4][0] for i in infos if i[0]==socket.AF_INET})
-        recs["AAAA"]= sorted({i[4][0] for i in infos if i[0]==socket.AF_INET6})
-    except Exception as e:
-        return jsonify(ok=True, host=host, error=str(e)[:200], records={})
-    return jsonify(ok=True, host=host, records=recs)
-
-@app.route("/api/v1/whois")
-@dev_required
-def dev_whois():
-    denied = _dev_scope("whois")
-    if denied: return denied
-    domain = (request.args.get("domain") or "").strip().lower()
-    if not re.match(r"^[a-z0-9.\-]{2,253}$", domain): return jsonify(ok=False, error="bad_domain"), 400
-    try:
-        import whois
-        w = whois.whois(domain)
-        d = {k: (v.isoformat() if hasattr(v,"isoformat") else v)
-             for k,v in (w.__dict__ if hasattr(w,"__dict__") else {}).items() if v}
-        return jsonify(ok=True, domain=domain, whois=d)
-    except ImportError:
-        return jsonify(ok=False, error="whois_not_installed", hint="pip install python-whois"), 501
-    except Exception as e:
-        return jsonify(ok=False, domain=domain, error=str(e)[:200])
-
-@app.route("/api/v1/search")
-@dev_required
-def dev_search():
-    denied = _dev_scope("search")
-    if denied: return denied
-    key, cx = genv("GOOGLE_SEARCH_API_KEY"), genv("GOOGLE_SEARCH_CX")
-    if not key or not cx:
-        return jsonify(ok=False, error="search_not_configured",
-                       hint="На сервере не заполнены GOOGLE_SEARCH_API_KEY/CX в .env"), 503
-    q = (request.args.get("q") or "").strip()[:200]
-    if not q: return jsonify(ok=False, error="empty_query"), 400
-    params = {"key": key, "cx": cx, "q": q, "num": min(10,int(request.args.get("num",10) or 10)), "safe":"active"}
-    if request.args.get("mode") == "image": params["searchType"]="image"
-    r = http_lib.get("https://www.googleapis.com/customsearch/v1", params=params, timeout=15)
-    data = r.json()
-    items = [{"title":i["title"],"link":i["link"],"snippet":i.get("snippet","")}
-             for i in data.get("items",[])]
-    return jsonify(ok=True, query=q, count=len(items), results=items)
-
-@app.route("/api/v1/subnet")
-@dev_required
-def dev_subnet_api():
-    denied = _dev_scope("subnet")
-    if denied: return denied
-    cidr = (request.args.get("cidr") or "").strip()
-    m = re.match(r"^(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,2})$", cidr)
-    if not m: return jsonify(ok=False, error="bad_cidr", example="192.168.1.10/24"), 400
-    import ipaddress
-    try: net = ipaddress.ip_network(f"{m.group(1)}/{m.group(2)}", strict=False)
-    except ValueError as e: return jsonify(ok=False, error=str(e)), 400
-    hosts = list(net.hosts())
-    return jsonify(ok=True, cidr=str(net), network=str(net.network_address),
-                   netmask=str(net.netmask), broadcast=str(net.broadcast_address),
-                   prefixlen=net.prefixlen, total_addresses=net.num_addresses,
-                   usable_hosts=max(0, net.num_addresses-2),
-                   first_host=str(hosts[0]) if hosts else None,
-                   last_host=str(hosts[-1]) if hosts else None)
-
-@app.route("/api/v1/units")
-@dev_required
-def dev_units_api():
-    denied = _dev_scope("units")
-    if denied: return denied
-    val = request.args.get("v"); frm = request.args.get("from","mbps"); to = request.args.get("to","auto")
-    try: val=float(val)
-    except (TypeError,ValueError): return jsonify(ok=False, error="bad_value"), 400
-    SPEED={"bps":1,"kbps":1e3,"mbps":1e6,"gbps":1e9,"MB/s":8e6,"KB/s":8e3}
-    SIZE={"B":1,"KB":1024,"MB":1024**2,"GB":1024**3,"TB":1024**4}
-    table = SPEED if frm in SPEED else SIZE
-    if frm not in table: return jsonify(ok=False, error="bad_unit", units=list(table)), 400
-    base = val*table[frm]
-    out = {u: base/t for u,t in table.items()}
-    if to=="auto":
-        u=list(table); i=0
-        while i<len(u)-1 and out[u[i]]>=1000*(1024 if table is SIZE else 1): i+=1
-        best=u[i]
-        return jsonify(ok=True, value=val, unit=frm, result=round(out[best],4), best_unit=best, all=out)
-    if to not in table: return jsonify(ok=False, error="bad_target"), 400
-    return jsonify(ok=True, value=val, unit=frm, to=to, result=round(out[to],6))
-
-@app.route("/api/v1/ip")
-@dev_required
-def dev_ip():
-    """IP и гео КЛИЕНТА, вызвавшего API (как у ipify/ipinfo).
-    Фикс «всё на нуле»: раньше показывался адрес самого сервера, а geo
-    молча оставался null при недоступности единственного источника."""
-    fwd = request.headers.get("X-Forwarded-For", "")
-    client = (fwd.split(",")[0].strip() if fwd else "") or request.headers.get("X-Real-IP", "") or request.remote_addr or ""
-    geo = _geo_lookup(client)
-    if not geo:                                 # приватный/локальный IP — спросим внешний сервис
-        geo = _geo_lookup("")
-    return jsonify(ok=True, ip=geo.get("ip") or client, geo=geo or None,
-                   user_agent=request.headers.get("User-Agent", "")[:200])
-
-def _geo_lookup(ip):
-    """Гео по IP с зеркалами; всегда возвращает dict (может быть пустым)."""
-    srcs = []
-    if ip and not ip.startswith("127.") and ip != "localhost":
-        srcs.append(f"http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,query")
-        srcs.append(f"https://ipapi.co/{ip}/json/")
-    srcs.append("https://ipinfo.io/json")          # что видит мир (через прокси — публичный IP)
-    srcs.append("https://api.ipify.org?format=json")
-    for u in srcs:
-        try:
-            j = http_lib.get(u, timeout=6).json()
-            if isinstance(j, dict) and (j.get("ip") or j.get("query")):
-                return {"source": u.split("/")[2],
-                        "ip": j.get("ip") or j.get("query"),
-                        "country": j.get("country") or j.get("country_name"),
-                        "region": j.get("regionName") or j.get("region"),
-                        "city": j.get("city"), "isp": j.get("org") or j.get("isp")}
-        except Exception:
-            continue
-    return {}
-
-@app.route("/api/v1/uptime", methods=["GET"])
-@dev_required
-def dev_uptime_get():
-    denied = _dev_scope("status")
-    if denied: return denied
-    uid = g.dev["user"]["id"]; db = get_db()
-    mons = db.execute("SELECT id,url,name,interval_sec,enabled FROM monitors WHERE user_id=?",(uid,)).fetchall()
-    out=[]
-    for mo in mons:
-        st = db.execute("SELECT COUNT(*) c, SUM(ok) up FROM monitor_results WHERE monitor_id=? AND ts>?",
-                        (mo["id"], int(time.time()*1000)-86400000)).fetchone()
-        last = db.execute("SELECT ok,status,latency_ms,ts FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 1",(mo["id"],)).fetchone()
-        hist = db.execute("SELECT ts,ok,status,latency_ms FROM monitor_results WHERE monitor_id=? ORDER BY ts DESC LIMIT 20",
-                          (mo["id"],)).fetchall()
-        out.append({**dict(mo), "uptime_24h": round(100*(st["up"] or 0)/st["c"],2) if st["c"] else None,
-                    "checks_24h": st["c"], "last": dict(last) if last else None,
-                    "history": [dict(h) for h in reversed(hist)]})
-    return jsonify(ok=True, monitors=out)
-
-@app.route("/api/v1/uptime", methods=["POST"])
-@dev_required
-def dev_uptime_add():
-    denied = _dev_scope("status")
-    if denied: return denied
-    d = request.values if request.method=="POST" and request.is_json is False else (request.get_json(silent=True) or request.values)
-    url = (d.get("url") or "").strip()
-    if not URL_RE.match(url): return jsonify(ok=False, error="bad_url"), 400
-    interval = max(60, min(3600, int(d.get("interval_sec", 300) or 300)))
-    db = get_db()
-    cur = db.execute("INSERT INTO monitors(user_id,url,name,interval_sec,created_at) VALUES(?,?,?,?,?)",
-        (g.dev["user"]["id"], url, (d.get("name") or url)[:80], interval, datetime.now().isoformat(timespec="seconds")))
-    db.commit(); mid = cur.lastrowid
-    res = _check_url(url); now=int(time.time()*1000)
-    db.execute("INSERT INTO monitor_results(monitor_id,ts,ok,status,latency_ms,error) VALUES(?,?,?,?,?,?)",
-        (mid, now, 1 if res["ok"] else 0, res["status"], res["latency_ms"], res.get("error")))
-    db.execute("UPDATE monitors SET last_check=? WHERE id=?",(now,mid)); db.commit()
-    return jsonify(ok=True, id=mid, result=res)
-
-
-# ============ ИНТЕРНЕТ-ИНСТРУМЕНТЫ (страница «Инструменты») ============
-def _ssrf_guard(url):
-    """Разрешаем только http(s) и публичные адреса (защита от SSRF)."""
-    from urllib.parse import urlparse
-    import ipaddress, socket
-    if not URL_RE.match(url): return False
-    try:
-        host = urlparse(url).hostname or ""
-        infos = socket.getaddrinfo(host, None)
-        for i in infos:
-            ip = ipaddress.ip_address(i[4][0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return False
-    except Exception:
-        return False
-    return True
-
-@app.route("/api/tools/headers", methods=["GET"])
-@login_required
-def tool_headers():
-    url = (request.args.get("url") or "").strip()
-    if not url.startswith(("http://", "https://")): return jsonify(ok=False, error="bad_url"), 400
-    if not _ssrf_guard(url): return jsonify(ok=False, error="private_or_invalid_host"), 400
-    chain, cur = [], url
-    try:
-        for _ in range(6):
-            r = http_lib.head(cur, timeout=10, allow_redirects=False,
-                              headers={"User-Agent": "NetPulseTools/1.0"})
-            info = {"url": cur[:300], "status": r.status_code,
-                    "server": r.headers.get("Server"), "content_type": r.headers.get("Content-Type")}
-            sec = {h: r.headers[h][:120] for h in
-                   ("Strict-Transport-Security", "Content-Security-Policy", "X-Frame-Options",
-                    "X-Content-Type-Options", "Referrer-Policy") if h in r.headers}
-            info["security_headers"] = sec
-            chain.append(info)
-            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("Location"):
-                loc = r.headers["Location"]
-                cur = loc if loc.startswith("http") else cur.rstrip("/") + loc
-            else:
-                break
-        return jsonify(ok=True, redirects=len(chain)-1, final_status=chain[-1]["status"], chain=chain)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200]), 502
-
-@app.route("/api/tools/ping-tcp", methods=["GET"])
-@login_required
-def tool_ping_tcp():
-    """TCP-пинг с разбивкой DNS/TCP/TLS по хосту или URL."""
-    from urllib.parse import urlparse
-    import socket, ssl as _ssl
-    target = (request.args.get("host") or request.args.get("url") or "").strip()
-    if not target: return jsonify(ok=False, error="empty"), 400
-    scheme, port = "tcp", int(request.args.get("port", 0) or 0)
-    if "://" in target:
-        p = urlparse(target); host = p.hostname or ""; scheme = p.scheme; port = port or (443 if scheme == "https" else 80)
-    else:
-        host = target.split(":")[0]; port = port or 80
-    if not re.match(r"^[A-Za-z0-9.\-:_]{1,253}$", host): return jsonify(ok=False, error="bad_host"), 400
-    n = min(max(int(request.args.get("n", 4)), 1), 8)
-    t0 = time.perf_counter()
-    try: ip = socket.gethostbyname(host)
-    except Exception as e: return jsonify(ok=False, error=f"dns: {str(e)[:120]}"), 502
-    dns_ms = round((time.perf_counter()-t0)*1000, 1)
-    samples, tls_ms = [], None
-    for _ in range(n):
-        t1 = time.perf_counter()
-        try:
-            s = socket.create_connection((ip, port), timeout=5)
-            tcp = (time.perf_counter()-t1)*1000
-            if scheme == "https":
-                try:
-                    t2 = time.perf_counter()
-                    ctx = _ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = _ssl.CERT_NONE
-                    ss = ctx.wrap_socket(s, server_hostname=host); tls_ms = round((time.perf_counter()-t2)*1000, 1)
-                    cert = ss.peer_cert if hasattr(ss, "peer_cert") else {}
-                    ss.close()
-                except Exception:
-                    s.close()
-            else:
-                s.close()
-            samples.append(round(tcp, 1))
-        except Exception as e:
-            samples.append(None)
-    ok_s = [x for x in samples if x is not None]
-    return jsonify(ok=True, host=host, ip=ip, port=port, dns_ms=dns_ms,
-                   tcp_avg_ms=round(sum(ok_s)/len(ok_s), 1) if ok_s else None,
-                   tcp_min_ms=min(ok_s) if ok_s else None, tcp_max_ms=max(ok_s) if ok_s else None,
-                   tls_ms=tls_ms, samples=samples, loss_pct=round(100*(n-len(ok_s))/n, 1))
-
-@app.route("/api/tools/dns-full", methods=["GET"])
-@login_required
-def tool_dns_full():
-    """Полный DNS через Google DoH: A, AAAA, MX, TXT, NS, CNAME, SOA."""
-    host = (request.args.get("host") or "").strip().lower()
-    if not re.match(r"^[a-z0-9.\-]{2,253}$", host): return jsonify(ok=False, error="bad_host"), 400
-    out = {}
-    for typ in ("A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA"):
-        try:
-            j = http_lib.get("https://dns.google/resolve", params={"name": host, "type": typ},
-                             timeout=8, headers={"Accept": "application/dns-json"}).json()
-            ans = [{"data": a.get("data", "")[:160], "ttl": a.get("TTL")} for a in j.get("Answer", []) if a.get("type")]
-            out[typ] = {"status": j.get("Status", -1), "answers": ans}
-        except Exception as e:
-            out[typ] = {"status": -1, "error": str(e)[:100]}
-    return jsonify(ok=True, host=host, records=out)
-
-@app.route("/api/tools/ports", methods=["GET"])
-@login_required
-def tool_ports():
-    """Скан типовых портов на хосте (только публичные адреса)."""
-    import socket
-    host = (request.args.get("host") or "").strip()
-    if not re.match(r"^[A-Za-z0-9.\-]{1,253}$", host): return jsonify(ok=False, error="bad_host"), 400
-    try:
-        import ipaddress
-        ip = socket.gethostbyname(host)
-        pip = ipaddress.ip_address(ip)
-        if pip.is_private or pip.is_loopback or pip.is_link_local:
-            return jsonify(ok=False, error="private_host_forbidden"), 400
-    except Exception as e:
-        return jsonify(ok=False, error=f"dns: {str(e)[:100]}"), 502
-    COMMON = [(21,"FTP"),(22,"SSH"),(23,"Telnet"),(25,"SMTP"),(53,"DNS"),(80,"HTTP"),(110,"POP3"),
-              (143,"IMAP"),(443,"HTTPS"),(465,"SMTPS"),(587,"Submission"),(993,"IMAPS"),(995,"POP3S"),
-              (1723,"PPTP"),(3306,"MySQL"),(3389,"RDP"),(5432,"PostgreSQL"),(5900,"VNC"),(6379,"Redis"),
-              (8080,"HTTP-alt"),(8443,"HTTPS-alt"),(27017,"MongoDB")]
-    res = []
-    for port, name in COMMON:
-        st = "closed"
-        try:
-            s = socket.create_connection((ip, port), timeout=1.2); s.close(); st = "open"
-        except socket.timeout: st = "filtered"
-        except OSError: pass
-        res.append({"port": port, "service": name, "state": st})
-    return jsonify(ok=True, host=host, ip=ip, ports=res,
-                   open_count=sum(1 for r in res if r["state"] == "open"))
-
-@app.route("/api/tools/cidr", methods=["GET"])
-@login_required
-def tool_cidr_list():
-    """Списки IP диапазонов провайдеров РФ/СНГ (публичный источник CIDR-IP)."""
-    isp = (request.args.get("isp") or "").strip().lower()
-    country = (request.args.get("country") or "ru").strip().lower()
-    if not re.match(r"^[a-z\- ]{0,40}$", isp) or not re.match(r"^[a-z]{2}$", country):
-        return jsonify(ok=False, error="bad_query"), 400
-    try:
-        r = http_lib.get(f"https://cdn.jsdelivr.net/gh/ipipdotnet/ipdb@master/misc/as/{country}.cidr.php",
-                         timeout=12)
-        lines = [l.strip() for l in r.text.splitlines() if "|" in l]
-        out = []
-        for l in lines:
-            parts = l.split("|")
-            if len(parts) < 3: continue
-            desc = (parts[1] or "").lower()
-            if isp and isp not in desc: continue
-            out.append({"cidr": parts[2].split(",")[0].strip(), "isp": parts[1][:80]})
-            if len(out) >= 30: break
-        return jsonify(ok=True, country=country, query=isp, count=len(out), ranges=out[:30])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:150]), 502
-
-@app.route("/api/tools/badges", methods=["GET"])
-@login_required
-def tool_badges():
-    """Статус-бейджи для сайта: shield.io / img.shields.io совместимый Markdown."""
-    subject = (request.args.get("subject") or "netpulse").strip()[:40]
-    status = (request.args.get("status") or "online").strip()[:40]
-    color = (request.args.get("color") or "brightgreen").strip()
-    if not re.match(r"^[a-zA-Z0-9 #_\-]+$", subject) or not re.match(r"^[a-zA-Z0-9 #_\-]+$", status):
-        return jsonify(ok=False, error="bad_chars"), 400
-    if not re.match(r"^[a-z0-9\-#]{1,20}$", color): color = "brightgreen"
-    from urllib.parse import quote
-    s, st = quote(subject), quote(status.replace("-", "--"))
-    u = f"https://img.shields.io/badge/{s}-{st}-{color}"
-    return jsonify(ok=True, url=u,
-                   markdown=f"![{subject}]({u})",
-                   html=f'<img src="{u}" alt="{subject}">',
-                   bbcode=f"[img]{u}[/img]")
-
-@app.route("/api/tools/useragent", methods=["GET"])
-@login_required
-def tool_useragent():
-    """Мой User-Agent, IP и браузерная информация со стороны сервера."""
-    fwd = request.headers.get("X-Forwarded-For", "")
-    client = (fwd.split(",")[0].strip() if fwd else "") or request.remote_addr or ""
-    geo = _geo_lookup(client) or _geo_lookup("")
-    ua = request.headers.get("User-Agent", "")
-    browser, engine = "—", "—"
-    low = ua.lower()
-    if "edg/" in low: browser = "Edge"
-    elif "opr/" in low or "opera" in low: browser = "Opera"
-    elif "chrome/" in low and "chromium" not in low: browser = "Chrome"
-    elif "firefox/" in low: browser = "Firefox"
-    elif "safari/" in low: browser = "Safari"
-    if "webkit" in low: engine = "WebKit"
-    elif "gecko" in low: engine = "Gecko"
-    os_name = "Other"
-    for k, v in (("windows","Windows"),("android","Android"),("iphone","iOS"),("ipad","iPad"),
-                 ("mac os x","macOS"),("macintosh","macOS"),("linux","Linux")):
-        if k in low: os_name = v; break
-    return jsonify(ok=True, user_agent=ua[:300], browser=browser, os=os_name,
-                   engine=engine, accept_lang=request.headers.get("Accept-Language","")[:60],
-                   ip=geo.get("ip") or client, geo={k: geo.get(k) for k in ("country","region","city","isp") if geo.get(k)})
-
-@app.route("/api/tools/http-status", methods=["GET"])
-@login_required
-def tool_http_status():
-    code = request.args.get("code", "")
-    TABLE = {100:"Continue",101:"Switching Protocols",200:"OK",201:"Created",202:"Accepted",
-             204:"No Content",206:"Partial Content",301:"Moved Permanently",302:"Found",
-             303:"See Other",304:"Not Modified",307:"Temporary Redirect",308:"Permanent Redirect",
-             400:"Bad Request",401:"Unauthorized",403:"Forbidden",404:"Not Found",405:"Method Not Allowed",
-             408:"Request Timeout",409:"Conflict",410:"Gone",413:"Payload Too Large",414:"URI Too Long",
-             418:"I'm a teapot",422:"Unprocessable Entity",429:"Too Many Requests",
-             500:"Internal Server Error",501:"Not Implemented",502:"Bad Gateway",
-             503:"Service Unavailable",504:"Gateway Timeout",505:"HTTP Version Not Supported"}
-    if not code: return jsonify(ok=True, table=[{"code":k,"name":v} for k,v in sorted(TABLE.items())])
-    try: c = int(code)
-    except ValueError: return jsonify(ok=False, error="bad_code"), 400
-    return jsonify(ok=True, code=c, name=TABLE.get(c, "Unknown"), class_of=c//100)
-
-@app.route("/api/tools/mime", methods=["GET"])
-@login_required
-def tool_mime():
-    ext = (request.args.get("ext") or "").strip().lower().lstrip(".")
-    q = (request.args.get("q") or "").strip().lower()
-    M = {"html":"text/html","css":"text/css","js":"application/javascript","json":"application/json",
-         "png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","svg":"image/svg+xml",
-         "webp":"image/webp","ico":"image/vnd.microsoft.icon","mp3":"audio/mpeg","mp4":"video/mp4",
-         "webm":"video/webm","wav":"audio/wav","ogg":"audio/ogg","pdf":"application/pdf",
-         "zip":"application/zip","gz":"application/gzip","tar":"application/x-tar","rar":"application/vnd.rar",
-         "txt":"text/plain","csv":"text/csv","xml":"application/xml","md":"text/markdown",
-         "woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf",
-         "exe":"application/vnd.microsoft.portable-executable","apk":"application/vnd.android.package-archive",
-         "ipa":"application/octet-stream","docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-         "xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-         "pptx":"application/vnd.openxmlformats-officedocument.presentationml.presentation",
-         "wasm":"application/wasm","toml":"application/toml","yaml":"application/yaml","yml":"application/yaml"}
-    if ext: return jsonify(ok=True, ext=ext, mime=M.get(ext), known=ext in M)
-    if q:   return jsonify(ok=True, results=[{"ext":k,"mime":v} for k,v in M.items() if q in k or q in v][:20])
-    return jsonify(ok=True, count=len(M), examples=dict(list(M.items())[:12]))
-
-@app.route("/api/tools/url-parse", methods=["GET"])
-@login_required
-def tool_url_parse():
-    from urllib.parse import urlparse, parse_qs, unquote
-    url = (request.args.get("url") or "").strip()
-    if not url: return jsonify(ok=False, error="empty"), 400
-    try: p = urlparse(url)
-    except Exception as e: return jsonify(ok=False, error=str(e)[:120]), 400
-    qs = {k: [unquote(x) for x in v] for k, v in parse_qs(p.query).items()}
-    host = p.hostname or ""
-    labels = host.split(".")
-    tld = ".".join(labels[-2:]) if len(labels) >= 2 else host
-    return jsonify(ok=True, url=url, scheme=p.scheme or "", host=host, port=p.port or "",
-                   path=p.path or "", query=p.query or "", fragment=p.fragment or "",
-                   username=p.username or "", password_masked=bool(p.password),
-                   params=qs, subdomain=".".join(labels[:-2]) if len(labels) > 2 else "",
-                   domain_tld=tld)
-
-@app.route("/api/tools/text", methods=["POST"])
-@login_required
-def tool_text():
-    d = request.get_json(silent=True) or {}
-    text = str(d.get("text", ""))[:100_000]
-    if not text: return jsonify(ok=False, error="empty_text"), 400
-    words = re.findall(r"[\wА-Яа-яЁё]+", text)
-    lines = text.splitlines()
-    sentences = re.split(r"[.!?…]+", text.strip())
-    def slugify(s):
-        TR = {"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"yo","ж":"zh","з":"z","и":"i",
-              "й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t",
-              "у":"u","ф":"f","х":"h","ц":"ts","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"",
-              "э":"e","ю":"yu","я":"ya"}
-        s = "".join(TR.get(ch, ch) for ch in s.lower())
-        return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", s)).strip("-")[:80]
-    return jsonify(ok=True, chars=len(text), chars_no_space=len(text.replace(" ", "")),
-                   words=len(words), lines=len(lines), paragraphs=len([x for x in text.split("\n\n") if x.strip()]),
-                   sentences=max(len([x for x in sentences if x.strip()]), 1),
-                   unique_words=len(set(w.lower() for w in words)),
-                   read_min=round(len(words)/200, 1), speak_min=round(len(words)/130, 1),
-                   upper=text.upper(), lower=text.lower(), swapcase=text.swapcase(),
-                   reversed=text[::-1], snake=re.sub(r"(?<!^)(?=[A-Z])", "_", text.strip()).lower()[:120],
-                   kebab=re.sub(r"\s+", "-", text.strip().lower())[:120], camel=re.sub(r"\s+(.)", lambda m: m.group(1).upper(), text.strip())[:120],
-                   slug=slugify(text.strip()), base64=base64.b64encode(text.encode()).decode()[:5000],
-                   rot13=text.translate(str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
-                        "nopqrstuvwxyzabcdefghijklmNOPQRSTUVWXYZABCDEFGHIJKLM")),
-                   top_words=sorted(((w.lower(), c) for w, c in
-                        __import__("collections").Counter(words).items()), key=lambda x: -x[1])[:8])
-
-# ============ БОТ-ПОМОЩНИК — бэкенд генерации текста (без ключей) ============
-# Модель задаётся в .env: ASSISTANT_MODEL (по умолчанию openai)
-# адреса текстовых бэкендов помощника (переопределяются в .env: ASSISTANT_API_URL=url1,url2).
-# ВНИМАНИЕ: раньше здесь был «запасной» syntho.pollinations.ai — такого хоста не существует,
-# он никогда не резолвился и только тратил ~15 секунд на DNS-ретраи при каждом запросе.
-ASSISTANT_DEFAULT_URLS = ["https://text.pollinations.ai/openai"]
-
-def assistant_api_urls():
-    raw = genv("ASSISTANT_API_URL") or ""
-    urls = [u.strip() for u in raw.split(",") if u.strip()]
-    for fb in ASSISTANT_DEFAULT_URLS:
-        if fb not in urls:
-            urls.append(fb)
-    return urls
-
-
-def _no_retry_adapter():
-    # ретраи делает наш собственный цикл (с ротацией соединений), urllib3 отключён —
-    # иначе один SSLEOFError превращается в 3 скрытых повтора + долгие DNS-ретраи
-    return HTTPAdapter(max_retries=Retry(total=0, read=False),
-                       pool_connections=1, pool_maxsize=1)
-
-
-def _fresh_post(url, payload, stream=False, timeout=(10, 45)):
-    """Каждый запрос идёт в НОВОМ TCP+TLS соединении (Connection: close, пул выключен).
-    Это лечит 'SSLEOFError: UNEXPECTED_EOF_WHILE_READING': облачный балансировщик
-    закрывает idle keep-alive соединения, а переиспользование такого коннекта — главная
-    причина этих обрывов. Свежее соединение каждый раз = EOF практически исключён."""
-    s = http_lib.Session()
-    s.headers.update({"Connection": "close"})
-    s.mount("https://", _no_retry_adapter())
-    s.mount("http://", _no_retry_adapter())
-    try:
-        r = s.post(url, json=payload, timeout=timeout, stream=stream)
-        r._np_session = s          # сохранить сессию, чтобы закрыть после чтения тела
-        return r
-    except Exception:
-        s.close()
-        raise
-
-
-def _close_resp(r):
-    try:
-        if r is not None: r.close()
-    except Exception: pass
-    try:
-        s = getattr(r, "_np_session", None)
-        if s is not None: s.close()
-    except Exception: pass
-
-ASSISTANT_SYSTEM_PROMPT = (
-    "Ты — Палс, встроенный помощник сайта NetPulse (сервис проверки скорости интернета, "
-    "пинга, трассировки, DNS, Wi-Fi аналитики, поиска Google, истории измерений, "
-    "мониторинга доступности сайтов uptime и Developer API).\n"
-    "Разделы сайта: Спидтест (главная, кнопка «Старт», live-график), Пинг, Трассировка, DNS, "
-    "Wi-Fi (анализ каналов 2.4/5/6 ГГц), Поиск (web/images), История (экспорт JSON/CSV), "
-    "Мониторинг (URL-проверки каждые N секунд, аптайм за 24ч, уведомления при падении), "
-    "Настройки (профиль, Developer API ключи вида sp-test-… или sp-live-…, scopes basic/net/search, "
-    "лимит запросов в минуту, дневная квота, разрешённые Origin, срок действия, отзыв/ротация ключей), "
-    "О проекте. Вход — только через Google.\n"
-    "Developer API (публичный, как у OpenAI): базовый адрес https://help.reallyvisuals.cloudpub.ru , "
-    "эндпоинты: GET /api/v1/info|ping?url=|status?url=|latency?host=&port=&n=|speed?bytes=&downloads=&upload=|"
-    "trace?url=|dns?host=|whois?domain=|search?q=&mode=|subnet?cidr=|units?v=&from=&to=|ip|uptime; "
-    "POST /api/v1/uptime {url,interval_sec}. Спидтест через API — асинхронный: "
-    "GET/POST /api/v1/speedtest/start?bytes=1..25&downloads=1..6&upload=true → вернёт id задания, "
-    "затем опрашивать GET /api/v1/speedtest/result?id= каждые ~2 сек до status=done (download_mbps, upload_mbps, ping_ms). "
-    "Без ключа работают только публичные эндпоинты: карточка /api/v1, /api/v1/ping, /api/v1/status и /api/v1/ip; "
-    "остальные требуют ключ и вернут 403 Forbidden с подсказкой, при превышении лимита — 429 Too Many Requests. "
-    "Ключ передаётся заголовком 'X-NetPulse-Key: sp-test-…' (или 'Authorization: Bearer sp-…'). "
-    "Если пользователь получает 403 insufficient_scope или не понимает причину 403 — посоветуй ему в Настройках → Developer API нажать «⚙ Изменить» у ключа и включить scope basic (он покрывает ping/спидтест/dns/trace/subnet/units/ip/info/uptime) или all (все сервисы сразу); изменения применяются мгновенно, пересоздавать ключ не нужно. Если ключ отозван/выключен — кнопки «Включить заново» или «Ротация». "
-    "CORS открыт — можно вызывать fetch() прямо со сторонних сайтов.\n"
-    "Через API доступны ВСЕ наши сервисы: спидтест (/api/v1/speedtest/start+result или быстрый синхронный /api/v1/speed — серверный замер скорости через "
-    "Cloudflare edge, параметры bytes=1..25 МБ, downloads=1..6 потоков, upload=true → download_mbps, "
-    "upload_mbps, ping_ms), пинг и задержка (/api/v1/ping, /api/v1/latency с avg/min/max/jitter), "
-    "трассировка (/api/v1/trace), DNS, WHOIS, поиск Google, калькулятор подсетей, конвертер единиц, "
-    "IP-инфо и uptime-мониторинг, а также утилиты v9: кодирование base64/url/hex (/api/v1/encode), "
-    "хеш-суммы md5/sha1/sha256/sha512 + HMAC (/api/v1/hash?text=&algo=all&key=), генератор UUID/токенов "
-    "(/api/v1/uuid?n=&kind=uuid4|hex|digits|token), QR-код в виде SVG (/api/v1/qrcode?text=...), "
-    "проверка HTTP-заголовков и редиректов сайта с HSTS/CSP/X-Frame-Options (/api/v1/http-headers?url=).\n"
-    "Страница «Интернет-инструменты» (вкладка 🧰 Инструменты): TCP-пинг с разбивкой DNS/TCP/TLS, полный DNS "
-    "(A/AAAA/MX/TXT/NS/CNAME/SOA), проверка HTTP-заголовков и цепочки редиректов, скан 22 типовых портов, "
-    "IP-диапазоны провайдеров по странам, генератор shield.io-бейджей, разбор URL на части, справочник "
-    "HTTP-кодов и MIME-типов, анализ текста (слова/символы/slugs/base64/rot13), «мой User-Agent и IP». "
-    "Эти функции доступны пользователям сайта в разделе Инструменты. "
-    "Если пользователь хочет использовать наш спидтест или сеть-сервисы "
-    "на своём сайте — покажи пример с нужным эндпоинтом.\n"
-    "Пример для пользователя (показывай кодом):\n"
-    "```js\n// спидтест через наш API (асинхронно: старт + опрос результата)\nconst H={headers:{'X-NetPulse-Key':'sp-test-ВАШ_КЛЮЧ'}};\n"
-    "const st = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/speedtest/start?bytes=10&downloads=4&upload=true',H).then(r=>r.json());\n"
-    "let res; do { await new Promise(x=>setTimeout(x,2000));\n"
-    "  res = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/speedtest/result?id='+st.id,H).then(r=>r.json());\n"
-    "} while(res.status!=='done' && res.status!=='error');\nconsole.log(res); // download_mbps, upload_mbps, ping_ms\n"
-    "// пинг до сайта (работает даже без ключа)\nconst p = await fetch('https://help.reallyvisuals.cloudpub.ru/api/v1/ping?url=https://example.com');\nconsole.log((await p.json()));\n```\n"
-    "ФОРМАТИРОВАНИЕ ОТВЕТОВ (обязательно): пиши в лёгком Markdown — **жирный** для важного, "
-    "*курсив* для акцентов, `код/команды/URL` в обратных кавычках, списки через «- ». "
-    "Любой код (JS, curl, Python, JSON) оформляй fenced-блоками с указанием языка:\n"
-    "```js\n...\n```\nИнтерфейс сайта отрисует жирный шрифт и блоки кода с кнопкой «Копировать». "
-    "Не используй таблицы и HTML-теги.\n"
-    "Отвечай кратко (до ~150 слов) по-русски, дружелюбно, шаг за шагом. Если вопрос не про NetPulse, "
-    "сеть или компьютеры — вежливо откажи и верни тему. Не выдумывай функции, которых нет."
-)
-
-def assistant_available():
-    # Публичный API без ключа: «доступен» всегда
-    return True
-
-def _assistant_call(history, user_text):
-    model = genv("ASSISTANT_MODEL", "openai")
-    messages = [{"role": "system", "content": ASSISTANT_SYSTEM_PROMPT}]
-    for m in history[-10:]:
-        role = "assistant" if m["role"] == "assistant" else "user"
-        messages.append({"role": role, "content": m["text"]})
-    messages.append({"role": "user", "content": user_text})
-    payload = {"messages": messages, "model": model, "referrer": "netpulse",
-               "seed": int(time.time()) % 100000,
-               "temperature": 0.5, "max_tokens": 700}
-    last_err = None
-    # каждая попытка — в свежем соединении; при сетевом сбое короткая пауза и повтор
-    for url in assistant_api_urls():
-        for attempt in range(3):
-            r = None
-            try:
-                r = _fresh_post(url, payload, timeout=(10, 45))
-                try:
-                    data = r.json()
-                except ValueError:
-                    data = {}
-                if r.status_code == 200:
-                    choice = (data.get("choices") or [{}])[0]
-                    txt = ((choice.get("message") or {}).get("content") or "").strip()
-                    if not txt:
-                        txt = (data.get("text") or "").strip()  # редкий fallback-формат
-                    if txt:
-                        return txt
-                    last_err = "пустой ответ модели"
-                else:
-                    err = (data.get("error") or data.get("message") or f"HTTP {r.status_code}")
-                    if isinstance(err, dict): err = err.get("message", str(err))
-                    last_err = str(err)[:200]
-                    if r.status_code in (401, 403, 404):
-                        break  # адрес не годится — сразу на следующий
-            except (http_lib.exceptions.RequestException, OSError) as e:
-                last_err = type(e).__name__
-                log.warning("assistant backend %s attempt %d: %s", url, attempt + 1, e)
-                time.sleep(0.8 * (attempt + 1))
-            finally:
-                _close_resp(r)
-    raise RuntimeError(f"Помощник временно недоступен (сетевой сбой). Повторите вопрос через пару секунд. [{str(last_err)[:80]}]")
-
-
-def _assistant_stream(history, user_text):
-    """Генератор: отдаёт текст ответа по мере написания (SSE-стриминг).
-    Пробует адреса из assistant_api_urls(); первый же успешный стримится до конца."""
-    model = genv("ASSISTANT_MODEL", "openai")
-    messages = [{"role": "system", "content": ASSISTANT_SYSTEM_PROMPT}]
-    for m in history[-10:]:
-        role = "assistant" if m["role"] == "assistant" else "user"
-        messages.append({"role": role, "content": m["text"]})
-    messages.append({"role": "user", "content": user_text})
-    payload = {"messages": messages, "model": model, "referrer": "netpulse",
-               "seed": int(time.time()) % 100000,
-               "temperature": 0.5, "max_tokens": 700, "stream": True}
-    last_err = None
-    for url in assistant_api_urls():
-        got = False
-        r = None
-        try:
-            r = _fresh_post(url, payload, stream=True, timeout=(10, 60))
-            if r.status_code != 200:
-                last_err = f"HTTP {r.status_code}"
-                continue
-            ctype = r.headers.get("Content-Type", "")
-            if "event-stream" not in ctype and "ndjson" not in ctype and "json" in ctype:
-                # сервер проигнорировал stream=true — работаем как с обычным JSON
-                data = r.json()
-                choice = (data.get("choices") or [{}])[0]
-                txt = ((choice.get("message") or {}).get("content") or "").strip()
-                if txt:
-                    yield txt; return
-                last_err = "пустой ответ модели"; continue
-            buf = b""
-            for chunk in r.iter_content(1024):
-                if not chunk: continue
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    line = line.strip()
-                    if not line.startswith(b"data:"): continue
-                    data = line[5:].strip()
-                    if data == b"[DONE]":
-                        if got: return
-                        break
-                    try:
-                        j = json.loads(data.decode("utf-8", "ignore"))
-                    except ValueError:
-                        continue
-                    d = ""
-                    try:
-                        ch = (j.get("choices") or [{}])[0]
-                        d = ((ch.get("delta") or {}).get("content")
-                             or (ch.get("message") or {}).get("content") or "")
-                    except AttributeError:
-                        d = ""
-                    if d:
-                        got = True
-                        yield d
-            if got: return
-        except (http_lib.exceptions.RequestException, OSError) as e:
-            last_err = type(e).__name__
-            log.warning("assistant stream %s: %s", url, e)
-            if got:   # часть текста уже отправлена — не переключаем адрес
-                return
-        finally:
-            _close_resp(r)
-    # все адреса не ответили в стриме — одна быстрая попытка обычным запросом (свежее соединение)
-    try:
-        reply = _assistant_call(history, user_text)
-        yield reply
-        return
-    except Exception as e:
-        log.warning("assistant fallback after stream failed: %s", type(e).__name__)
-    yield "\n\n⚠ Сервис помощника сейчас недоступен. Попробуйте ещё раз через 10–20 секунд."
-
-
-@app.route("/api/chat/stream", methods=["POST"])
-@login_required
-def chat_stream():
-    d = request.get_json(silent=True) or {}
-    text = (d.get("text") or "").strip()[:900]
-    if not text: return jsonify(ok=False, error="empty"), 400
-    db = get_db(); uid = session["user"]["db_id"]; now = int(time.time()*1000)
-    db.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)", (uid, now, "user", text))
-    db.commit()
-
-    def gen():
-        full = []
-        # отдельное соединение: контекст запроса закрывается до окончания стрима
-        try:
-            conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-            history = [dict(r) for r in conn.execute(
-                "SELECT role,text FROM chat_messages WHERE user_id=? ORDER BY ts DESC LIMIT 11",
-                (uid,)).fetchall()][::-1][:-1]
-        except Exception:
-            conn = None; history = []
-        try:
-            for piece in _assistant_stream(history, text):
-                full.append(piece)
-                yield "d" + json.dumps({"t": piece}, ensure_ascii=False) + "\n"
-        except Exception as e:
-            log.warning("chat stream error: %s", e)
-            yield "d" + json.dumps({"t": "⚠ Сервис помощника сейчас недоступен — попробуйте ещё раз через 10–20 секунд."}, ensure_ascii=False) + "\n"
-        reply = "".join(full).strip()
-        if reply and conn is not None:
-            try:
-                conn.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)",
-                             (uid, int(time.time()*1000), "assistant", reply))
-                conn.commit()
-            except Exception as e:
-                log.warning("chat save error: %s", e)
-        if conn is not None:
-            try: conn.close()
-            except Exception: pass
-        yield "e" + json.dumps({"ok": bool(reply)}) + "\n"
-
-    return Response(gen(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-
-@app.route("/api/chat", methods=["POST"])
-@login_required
-def chat_send():
-    d = request.get_json(silent=True) or {}
-    text = (d.get("text") or "").strip()[:900]
-    if not text: return jsonify(ok=False, error="empty"), 400
-    db = get_db(); uid = session["user"]["db_id"]; now = int(time.time()*1000)
-    db.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)", (uid, now, "user", text))
-    db.commit()
-    if not assistant_available():
-        reply = "🤖 Помощник временно недоступен."
-        status = 503
-    else:
-        try:
-            history = [dict(r) for r in db.execute(
-                "SELECT role,text FROM chat_messages WHERE user_id=? ORDER BY ts DESC LIMIT 11",
-                (uid,)).fetchall()][::-1][:-1]
-            reply = _assistant_call(history, text); status = 200
-        except Exception as e:
-            log.warning("chat backend error: %s", e)
-            # не показываем пользователю технические детали (URL, стектрейсы)
-            reply = ("⚠ Сервис помощника сейчас недоступен — это внешняя сеть, "
-                     "а не ваш аккаунт. Попробуйте ещё раз через 10–20 секунд "
-                     "(или отправьте вопрос повторно чуть позже).")
-            status = 503
-    db.execute("INSERT INTO chat_messages(user_id,ts,role,text) VALUES(?,?,?,?)", (uid, int(time.time()*1000), "assistant", reply))
-    db.commit()
-    return jsonify(ok=status==200, reply=reply), status
-
-@app.route("/api/chat", methods=["GET"])
-@login_required
-def chat_get():
-    rows = get_db().execute("SELECT ts,role,text FROM chat_messages WHERE user_id=? ORDER BY ts ASC LIMIT 200",
-                            (session["user"]["db_id"],)).fetchall()
-    return jsonify(ok=True, messages=[dict(r) for r in rows], assistant_ready=assistant_available())
-
-@app.route("/api/chat", methods=["DELETE"])
-@login_required
-def chat_clear():
-    get_db().execute("DELETE FROM chat_messages WHERE user_id=?", (session["user"]["db_id"],))
-    get_db().commit(); return jsonify(ok=True)
-
-# --- управление dev-ключами (нужен вход через Google, cookies) ---
-@app.route("/api/devkeys", methods=["GET"])
-@login_required
-def devkeys_list():
-    rows = get_db().execute(
-        "SELECT id,name,key_prefix,scopes,active,rate_limit,created_at,last_used,calls,"
-        "env,allowed_origins,quota_day,revoked,note,expires_at FROM ("
-        "SELECT *, COALESCE(NULLIF(key_mask,''),'sp-***') key_prefix FROM dev_keys WHERE user_id=?) ORDER BY id DESC",
-        (session["user"]["db_id"],)).fetchall()
-    return jsonify(ok=True, keys=[dict(r) for r in rows])
-
-@app.route("/api/devkeys", methods=["POST"])
-@login_required
-def devkeys_create():
-    d = request.get_json(silent=True) or {}
-    name = (d.get("name") or "api key")[:60]
-    env  = d.get("env") if d.get("env") in ("test","live") else "test"
-    scopes = d.get("scopes") or ["basic"]
-    if isinstance(scopes, str): scopes = [x for x in scopes.split(",") if x]
-    scopes = [s for s in scopes if s in DEV_SCOPES] or ["basic"]
-    rl = max(5, min(600, int(d.get("rate_limit", 60) or 60)))
-    quota_day = max(0, min(1_000_000, int(d.get("quota_day", 0) or 0)))
-    origins = d.get("allowed_origins") or "*"
-    if isinstance(origins, list): origins = ",".join(origins)
-    origins = origins.strip() or "*"
-    expires_days = int(d.get("expires_days", 0) or 0)
-    expires_at = (datetime.now() + timedelta(days=expires_days)).isoformat(timespec="seconds") if expires_days > 0 else ""
-    note = (d.get("note") or "")[:140]
-    raw = _gen_key(env); secret = secrets.token_hex(16)
-    h = hashlib.sha256(raw.encode()).hexdigest()
-    get_db().execute(
-        "INSERT INTO dev_keys(user_id,name,key_hash,key_mask,secret,scopes,rate_limit,env,"
-        "allowed_origins,quota_day,expires_at,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (session["user"]["db_id"], name, h, _key_prefix(raw), secret, ",".join(scopes), rl, env,
-         origins, quota_day, expires_at, note, datetime.now().isoformat(timespec="seconds")))
-    get_db().commit()
-    return jsonify(ok=True, key=raw, secret=secret, env=env,
-                   note="Ключ показан ОДИН раз — сохраните его сейчас")
-
-@app.route("/api/devkeys/<int:kid>", methods=["PATCH"])
-@login_required
-def devkeys_update(kid):
-    d = request.get_json(silent=True) or {}
-    db = get_db(); k = db.execute("SELECT * FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
-    if not k: return jsonify(ok=False, error="not_found"), 404
-    sets, args = [], []
-    if "name"   in d: sets.append("name=?");        args.append((d["name"] or k["name"])[:60])
-    if "note"   in d: sets.append("note=?");        args.append((d["note"] or "")[:140])
-    if "rate_limit" in d: sets.append("rate_limit=?"); args.append(max(5, min(600, int(d["rate_limit"] or 60))))
-    if "quota_day"  in d: sets.append("quota_day=?");  args.append(max(0, min(1_000_000, int(d["quota_day"] or 0))))
-    if "active"     in d: sets.append("active=?");     args.append(1 if d["active"] else 0)
-    if "env" in d and d["env"] in ("test","live"):
-        # окружение зашито в префикс ключа — смена env требует перевыпуска
-        return jsonify(ok=False, error="env_immutable",
-                       hint="Окружение (test/live) задаётся при создании. Для смены — создайте новый ключ."), 400
-    if "allowed_origins" in d:
-        o = d["allowed_origins"]
-        if isinstance(o, list): o = ",".join(o)
-        sets.append("allowed_origins=?"); args.append((o or "*").strip() or "*")
-    if "scopes" in d:
-        sc = d["scopes"]
-        if isinstance(sc, str): sc = [x for x in sc.split(",") if x]
-        sc = [s for s in sc if s in DEV_SCOPES] or ["basic"]
-        sets.append("scopes=?"); args.append(",".join(sc))
-    if "expires_days" in d:
-        ed = int(d["expires_days"] or 0)
-        val = (datetime.now() + timedelta(days=ed)).isoformat(timespec="seconds") if ed > 0 else ""
-        sets.append("expires_at=?"); args.append(val)
-    if sets:
-        args.append(kid); db.execute(f"UPDATE dev_keys SET {','.join(sets)} WHERE id=?", args); db.commit()
-    return jsonify(ok=True)
-
-@app.route("/api/devkeys/<int:kid>/revoke", methods=["POST"])
-@login_required
-def devkeys_revoke(kid):
-    db = get_db(); k = db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
-    if not k: return jsonify(ok=False, error="not_found"), 404
-    db.execute("UPDATE dev_keys SET revoked=1, active=0 WHERE id=?", (kid,)); db.commit()
-    return jsonify(ok=True, revoked=True)
-
-@app.route("/api/devkeys/<int:kid>/unrevoke", methods=["POST"])
-@login_required
-def devkeys_unrevoke(kid):
-    db = get_db(); k = db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
-    if not k: return jsonify(ok=False, error="not_found"), 404
-    db.execute("UPDATE dev_keys SET revoked=0, active=1 WHERE id=?", (kid,)); db.commit()
-    return jsonify(ok=True, revoked=False)
-
-@app.route("/api/devkeys/<int:kid>/rotate", methods=["POST"])
-@login_required
-def devkeys_rotate(kid):
-    """Перевыпуск ключа: новый sp-… со старыми настройками."""
-    db = get_db(); k = db.execute("SELECT * FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
-    if not k: return jsonify(ok=False, error="not_found"), 404
-    raw = _gen_key(k["env"]); h = hashlib.sha256(raw.encode()).hexdigest()
-    db.execute("UPDATE dev_keys SET key_hash=?, key_mask=?, revoked=0, active=1 WHERE id=?",
-               (h, _key_prefix(raw), kid)); db.commit()
-    return jsonify(ok=True, key=raw, note="Старый ключ перестал работать. Новый показан один раз.")
-
-@app.route("/api/devkeys/<int:kid>/usage")
-@login_required
-def devkeys_usage(kid):
-    db = get_db(); k = db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?", (kid, session["user"]["db_id"])).fetchone()
-    if not k: return jsonify(ok=False, error="not_found"), 404
-    now_ms = int(time.time()*1000)
-    day = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?", (kid, now_ms - now_ms%86400000)).fetchone()["c"]
-    hour = db.execute("SELECT COUNT(*) c FROM key_usage WHERE key_id=? AND ts>?", (kid, now_ms-3600000)).fetchone()["c"]
-    return jsonify(ok=True, today=day, last_hour=hour, total=k["calls"] if hasattr(k,"calls") else 0)
-
-@app.route("/api/devkeys/<int:kid>/toggle", methods=["POST"])
-@login_required
-def devkeys_toggle(kid):
-    db=get_db(); k=db.execute("SELECT id,active FROM dev_keys WHERE id=? AND user_id=?",(kid,session["user"]["db_id"])).fetchone()
-    if not k: return jsonify(ok=False, error="not_found"), 404
-    db.execute("UPDATE dev_keys SET active=? WHERE id=?",(0 if k["active"] else 1,kid)); db.commit()
-    return jsonify(ok=True, active=not bool(k["active"]))
-
-@app.route("/api/devkeys/<int:kid>", methods=["DELETE"])
-@login_required
-def devkeys_delete(kid):
-    db=get_db(); k=db.execute("SELECT id FROM dev_keys WHERE id=? AND user_id=?",(kid,session["user"]["db_id"])).fetchone()
-    if not k: return jsonify(ok=False, error="not_found"), 404
-    db.execute("DELETE FROM key_usage WHERE key_id=?",(kid,)); db.execute("DELETE FROM dev_keys WHERE id=?",(kid,))
-    db.commit(); return jsonify(ok=True)
-
-def auth_via_token():
-    """Bearer np_… для /openapi/*"""
-    hdr = request.headers.get("Authorization","")
-    if not hdr.startswith("Bearer np_"): return None
-    raw = hdr.split(None,1)[1].strip()
-    h = hashlib.sha256(raw.encode()).hexdigest()
-    db = get_db()
-    t = db.execute("SELECT * FROM api_tokens WHERE token_hash=?", (h,)).fetchone()
-    if not t: return None
-    db.execute("UPDATE api_tokens SET last_used=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), t["id"]))
-    db.commit()
-    u = db.execute("SELECT id,sub,name,email,picture FROM users WHERE id=?", (t["user_id"],)).fetchone()
-    return dict(u) if u else None
-
-def token_required(fn):
-    @wraps(fn)
-    def w(*a,**k):
-        u = auth_via_token()
-        if not u: return jsonify(ok=False, error="unauthorized", hint="Header: Authorization: Bearer np_…"), 401
-        g.api_user = u
-        return fn(*a,**k)
-    return w
-
-# --- OpenAPI (для curl/скриптов, авторизация токеном) ---
-@app.route("/openapi/v1/me")
-@token_required
-def openapi_me():
-    return jsonify(ok=True, user=g.api_user)
-
-@app.route("/openapi/v1/history")
-@token_required
-def openapi_history():
-    rows = get_db().execute("SELECT ts,kind,down,up,ping,jitter,loss FROM tests WHERE user_id=? ORDER BY ts DESC LIMIT 100",
-                            (g.api_user["id"],)).fetchall()
-    return jsonify(ok=True, history=[dict(r) for r in rows])
-
-@app.route("/openapi/v1/ping/<host>")
-@token_required
-def openapi_ping(host):
-    if not re.match(r"^[A-Za-z0-9.\-]{1,253}$", host): return jsonify(ok=False, error="bad_host"), 400
-    import socket
-    t0=time.perf_counter()
-    try:
-        ip = socket.gethostbyname(host)
-        tcp_t0=time.perf_counter()
-        s=socket.create_connection((ip, 80 if ":" not in host else 80), timeout=5); s.close()
-        return jsonify(ok=True, host=host, ip=ip, dns_ms=round((tcp_t0-t0)*1000,1),
-                       tcp_connect_ms=round((time.perf_counter()-tcp_t0)*1000,1))
-    except Exception as e:
-        return jsonify(ok=False, host=host, error=str(e)[:200])
-
-# ================= Магазин приложений: API =================
+# ---------------- API: права администратора ----------------
 @app.route("/api/store/activate", methods=["POST"])
 @login_required
 def store_activate():
-    """Активация прав администратора по паролю (страница /admin_streaker)."""
     d = request.get_json(silent=True) or {}
     pwd = str(d.get("password") or "")
     stored = store_admin_password()
     first_time = False
     if not stored:
-        # пароль ещё не задан: первый ввод задаёт его (хранится только хеш)
         if len(pwd) < 4:
             return jsonify(ok=False, error="too_short"), 400
         get_db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('admin_pass_hash',?)",
@@ -2373,16 +466,15 @@ def store_activate():
         return jsonify(ok=False, error="wrong_password"), 403
     u = session["user"]
     now = datetime.now().isoformat(timespec="seconds")
-    db = get_db()
-    db.execute("""INSERT INTO store_admins(user_sub,user_email,user_name,created_at)
-                  VALUES(?,?,?,?)
-                  ON CONFLICT(user_sub) DO UPDATE SET user_email=excluded.user_email,
-                  user_name=excluded.user_name""",
-               (u.get("sub"), u.get("email") or "", u.get("name") or "", now))
-    db.commit()
+    get_db().execute("""INSERT INTO store_admins(user_sub,user_email,user_name,created_at)
+                        VALUES(?,?,?,?)
+                        ON CONFLICT(user_sub) DO UPDATE SET user_email=excluded.user_email,
+                        user_name=excluded.user_name""",
+                     (u.get("sub"), u.get("email") or "", u.get("name") or "", now))
+    get_db().commit()
     session["store_admin"] = True
     log.info("Admin activated for %s%s", u.get("email") or u.get("sub"),
-              " (first-time setup)" if first_time else "")
+             " (first-time setup)" if first_time else "")
     return jsonify(ok=True, redirect="/store-admin", first_time=first_time)
 
 @app.route("/api/store/deactivate", methods=["POST"])
@@ -2391,12 +483,10 @@ def store_deactivate():
     session.pop("store_admin", None)
     return jsonify(ok=True)
 
+# ---------------- API: категории ----------------
 @app.route("/api/store/categories", methods=["GET"])
 def store_cats_list():
-    try:
-        rows = get_db().execute("SELECT * FROM app_categories ORDER BY name").fetchall()
-    except Exception:
-        rows = []
+    rows = get_db().execute("SELECT * FROM app_categories ORDER BY name").fetchall()
     return jsonify(ok=True, items=[dict(r) for r in rows])
 
 @app.route("/api/store/categories", methods=["POST"])
@@ -2404,15 +494,14 @@ def store_cats_list():
 def store_cats_add():
     d = request.get_json(silent=True) or {}
     name = str(d.get("name") or "").strip()[:60]
-    emoji = str(d.get("emoji") or "📦").strip()[:8]
+    emoji = str(d.get("emoji") or "📦").strip()[:4] or "📦"
     if not name: return jsonify(ok=False, error="empty_name"), 400
     db = get_db()
-    try:
-        cur = db.execute("INSERT INTO app_categories(name,emoji,created_at) VALUES(?,?,?)",
-                         (name, emoji, datetime.now().isoformat(timespec="seconds")))
-        db.commit()
-    except sqlite3.IntegrityError:
+    if db.execute("SELECT 1 FROM app_categories WHERE LOWER(name)=?", (name.lower(),)).fetchone():
         return jsonify(ok=False, error="already_exists"), 409
+    now = datetime.now().isoformat(timespec="seconds")
+    cur = db.execute("INSERT INTO app_categories(name,emoji,created_at) VALUES(?,?,?)", (name, emoji, now))
+    db.commit()
     return jsonify(ok=True, id=cur.lastrowid)
 
 @app.route("/api/store/categories/<int:cid>", methods=["PUT"])
@@ -2420,14 +509,14 @@ def store_cats_add():
 def store_cats_upd(cid):
     d = request.get_json(silent=True) or {}
     name = str(d.get("name") or "").strip()[:60]
-    emoji = str(d.get("emoji") or "📦").strip()[:8]
-    if not name: return jsonify(ok=False, error="empty_name"), 400
+    emoji = str(d.get("emoji") or "📦").strip()[:4] or "📦"
     db = get_db()
-    try:
-        db.execute("UPDATE app_categories SET name=?, emoji=? WHERE id=?", (name, emoji, cid))
-        db.commit()
-    except sqlite3.IntegrityError:
-        return jsonify(ok=False, error="already_exists"), 409
+    if not db.execute("SELECT 1 FROM app_categories WHERE id=?", (cid,)).fetchone():
+        return jsonify(ok=False, error="not_found"), 404
+    dup = db.execute("SELECT 1 FROM app_categories WHERE LOWER(name)=? AND id<>?", (name.lower(), cid)).fetchone()
+    if dup: return jsonify(ok=False, error="already_exists"), 409
+    db.execute("UPDATE app_categories SET name=?, emoji=? WHERE id=?", (name, emoji, cid))
+    db.commit()
     return jsonify(ok=True)
 
 @app.route("/api/store/categories/<int:cid>", methods=["DELETE"])
@@ -2439,78 +528,86 @@ def store_cats_del(cid):
     db.commit()
     return jsonify(ok=True)
 
+# ---------------- API: приложения (чтение) ----------------
 @app.route("/api/store/apps")
 @login_required
 def store_apps_list():
-    q  = (request.args.get("q") or "").strip().lower()
+    q = (request.args.get("q") or "").strip().lower()
     cat = request.args.get("category") or ""
     sort = request.args.get("sort") or "popular"
-    order = {"popular": "a.downloads DESC", "new": "a.created_at DESC",
-             "rating": "a.rating DESC, a.votes DESC", "name": "LOWER(a.title) ASC"}.get(sort, "a.downloads DESC")
-    sql = """SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
-             FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id WHERE 1=1"""
-    args = []
-    if cat and cat != "all":
-        if cat == "none": sql += " AND a.category_id IS NULL"
-        else: sql += " AND c.name=?"; args.append(cat)
-    if q:
-        sql += " AND (LOWER(a.title) LIKE ? OR LOWER(a.publisher) LIKE ? OR LOWER(a.description) LIKE ?)"
-        args += [f"%{q}%"] * 3
-    sql += f" ORDER BY a.featured DESC, {order}"
-    try:
-        rows = get_db().execute(sql, args).fetchall()
-    except Exception:
-        rows = []
-    return jsonify(ok=True, items=[_app_row_to_dict(r) for r in rows])
+    items = _store_apps_query(cat_name=(cat if cat not in ("all", "none") else None),
+                              q=q, sort=sort, liked_by=_uid())
+    return jsonify(ok=True, items=items)
 
-@app.route("/api/store/apps/<int:aid>")
+@app.route("/api/store/recommended")
 @login_required
-def store_app_get(aid):
-    r = get_db().execute("""SELECT a.*, c.name AS category_name, c.emoji AS category_emoji
-                            FROM store_apps a LEFT JOIN app_categories c ON c.id=a.category_id
-                            WHERE a.id=?""", (aid,)).fetchone()
+def store_recommended():
+    """Рекомендации: приложения с наибольшим числом лайков, скачиваний и хорошими отзывами."""
+    limit = min(int(request.args.get("limit") or 8), 24)
+    items = _store_apps_query(sort="recommended", limit=limit, liked_by=_uid())
+    return jsonify(ok=True, items=items)
+
+@app.route("/api/store/apps/<pid>")
+@login_required
+def store_app_get(pid):
+    r = _find_app(pid)
     if not r: return jsonify(ok=False, error="not_found"), 404
     return jsonify(ok=True, app=_app_row_to_dict(r))
 
-@app.route("/api/store/apps/<int:aid>/download")
+@app.route("/api/store/apps/<pid>/download", methods=["GET", "POST"])
 @login_required
-def store_app_download_get(aid):
-    """GET-ссылка на скачивание (кнопка «Скачать» ведёт сюда — браузер скачивает файл напрямую)."""
-    return _store_send_file(aid)
-
-@app.route("/api/store/apps/<int:aid>/download", methods=["POST"])
-@login_required
-def store_app_download(aid):
-    return _store_send_file(aid)
-
-def _store_send_file(aid):
-    db = get_db()
-    r = db.execute("SELECT * FROM store_apps WHERE id=?", (aid,)).fetchone()
+def store_app_download(pid):
+    """Кнопка «Скачать» на любой странице ведёт сюда — браузер скачивает файл напрямую."""
+    r = _find_app(pid)
     if not r: return jsonify(ok=False, error="not_found"), 404
     if not r["filename"]: return jsonify(ok=False, error="no_file"), 404
     p = STORE_DIR / "apps" / r["filename"]
     if not p.is_file(): return jsonify(ok=False, error="file_missing"), 404
-    db.execute("UPDATE store_apps SET downloads=downloads+1 WHERE id=?", (aid,)); db.commit()
+    db = get_db()
+    db.execute("UPDATE store_apps SET downloads=downloads+1 WHERE id=?", (r["id"],)); db.commit()
     return send_file(p, as_attachment=True, download_name=r["orig_name"] or p.name)
 
+# ---------------- API: лайки ----------------
+@app.route("/api/store/apps/<pid>/like", methods=["POST"])
+@login_required
+def store_app_like(pid):
+    r = _find_app(pid)
+    if not r: return jsonify(ok=False, error="not_found"), 404
+    uid = _uid()
+    if not uid: return jsonify(ok=False, error="no_account"), 400
+    db = get_db()
+    had = db.execute("SELECT 1 FROM app_likes WHERE app_id=? AND user_id=?", (r["id"], uid)).fetchone()
+    if had:
+        db.execute("DELETE FROM app_likes WHERE app_id=? AND user_id=?", (r["id"], uid))
+    else:
+        db.execute("INSERT INTO app_likes(app_id,user_id,created_at) VALUES(?,?,?)",
+                   (r["id"], uid, datetime.now().isoformat(timespec="seconds")))
+    _sync_likes(db, r["id"]); db.commit()
+    cnt = db.execute("SELECT likes FROM store_apps WHERE id=?", (r["id"],)).fetchone()["likes"]
+    return jsonify(ok=True, liked=not had, likes=cnt)
+
+# ---------------- API: отзывы ----------------
 @app.route("/api/store/reviews", methods=["POST"])
 @login_required
 def store_review_add():
     d = request.get_json(silent=True) or {}
-    aid = int(d.get("app_id") or 0)
+    r = _find_app(d.get("app_id"))
+    if not r: return jsonify(ok=False, error="not_found"), 404
+    aid = r["id"]
     try: stars = max(1, min(5, int(d.get("stars") or 0)))
     except Exception: return jsonify(ok=False, error="bad_stars"), 400
     text = str(d.get("text") or "").strip()[:1000]
-    uid = session["user"]["db_id"]; now = datetime.now().isoformat(timespec="seconds")
+    uid = _uid()
+    if not uid: return jsonify(ok=False, error="no_account"), 400
     db = get_db()
-    if not db.execute("SELECT 1 FROM store_apps WHERE id=?", (aid,)).fetchone():
-        return jsonify(ok=False, error="not_found"), 404
+    now = datetime.now().isoformat(timespec="seconds")
     db.execute("""INSERT INTO app_reviews(app_id,user_id,stars,text,created_at) VALUES(?,?,?,?,?)
                   ON CONFLICT(app_id,user_id) DO UPDATE SET stars=excluded.stars, text=excluded.text""",
                (aid, uid, stars, text, now))
     _recalc_rating(db, aid); db.commit()
     return jsonify(ok=True)
 
+# ---------------- API: админ (загрузка/редактирование) ----------------
 @app.route("/api/store/admin/apps", methods=["POST"])
 @admin_required
 def store_admin_upload():
@@ -2532,19 +629,22 @@ def store_admin_upload():
     try: cid = int(request.form.get("category_id") or 0) or None
     except Exception: cid = None
     now = datetime.now().isoformat(timespec="seconds")
-    cur = get_db().execute(
-        """INSERT INTO store_apps(title,publisher,description,tagline,version,category_id,
-           filename,orig_name,icon_path,size,featured,created_at,updated_at)
+    db = get_db()
+    while True:
+        pid = _gen_public_id()
+        if not db.execute("SELECT 1 FROM store_apps WHERE public_id=?", (pid,)).fetchone(): break
+    cur = db.execute(
+        """INSERT INTO store_apps(public_id,title,publisher,description,tagline,version,category_id,
+           filename,orig_name,icon_path,size,created_at,updated_at)
            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (title, (request.form.get("publisher") or "").strip()[:80],
+        (pid, title, (request.form.get("publisher") or "").strip()[:80],
          (request.form.get("description") or "").strip()[:5000],
          (request.form.get("tagline") or "").strip()[:200],
          (request.form.get("version") or "1.0").strip()[:30], cid, safe,
-         _safe_name(f.filename), icon_path, size,
-         1 if request.form.get("featured") else 0, now, now))
-    get_db().commit()
-    log.info("Store: uploaded app #%s '%s' (%s)", cur.lastrowid, title, _fmt_size(size))
-    return jsonify(ok=True, id=cur.lastrowid)
+         _safe_name(f.filename), icon_path, size, now, now))
+    db.commit()
+    log.info("Store: uploaded app %s '%s' (%s)", pid, title, _fmt_size(size))
+    return jsonify(ok=True, id=cur.lastrowid, public_id=pid)
 
 @app.route("/api/store/admin/apps/<int:aid>", methods=["PUT"])
 @admin_required
@@ -2555,12 +655,10 @@ def store_admin_update(aid):
         if k in d: fields.append(f"{k}=?"); vals.append(str(d[k]).strip()[:5000])
     if "category_id" in d:
         fields.append("category_id=?"); vals.append(int(d["category_id"] or 0) or None)
-    if "featured" in d: fields.append("featured=?"); vals.append(1 if d["featured"] else 0)
     if not fields: return jsonify(ok=False, error="nothing_to_update"), 400
     fields.append("updated_at=?"); vals.append(datetime.now().isoformat(timespec="seconds"))
     db = get_db()
     db.execute(f"UPDATE store_apps SET {', '.join(fields)} WHERE id=?", (*vals, aid))
-    # замена файла приложения
     if d.get("clear_file"):
         r = db.execute("SELECT filename FROM store_apps WHERE id=?", (aid,)).fetchone()
         if r and r["filename"]:
@@ -2603,6 +701,7 @@ def store_admin_delete(aid):
         try: (BASE_DIR / r["icon_path"].lstrip("/")).unlink(missing_ok=True)
         except Exception: pass
     db.execute("DELETE FROM app_reviews WHERE app_id=?", (aid,))
+    db.execute("DELETE FROM app_likes WHERE app_id=?", (aid,))
     db.execute("DELETE FROM store_apps WHERE id=?", (aid,))
     db.commit()
     return jsonify(ok=True)
@@ -2631,27 +730,16 @@ def store_admin_grant():
 @app.route("/api/store/admin/admins/<int:aid>", methods=["DELETE"])
 @admin_required
 def store_admin_revoke(aid):
-    me = (session.get("user") or {}).get("sub")
+    me_sub = (session.get("user") or {}).get("sub")
     row = get_db().execute("SELECT user_sub FROM store_admins WHERE id=?", (aid,)).fetchone()
     if not row: return jsonify(ok=False, error="not_found"), 404
-    if row["user_sub"] == me:
+    if row["user_sub"] == me_sub:
         return jsonify(ok=False, error="cannot_revoke_self"), 400
     get_db().execute("DELETE FROM store_admins WHERE id=?", (aid,))
     get_db().commit()
     return jsonify(ok=True)
 
-def _json_err_page(code):
-    """Для API-запросов отдаём JSON вместо HTML-страницы ошибки (и не падаем, если шаблона нет)."""
-    if request.path.startswith("/api/"):
-        msg = {403: "Forbidden", 404: "Not found", 500: "Internal server error"}[code]
-        return jsonify(ok=False, error="server_error" if code == 500 else "not_found",
-                       code=code, message=msg), code
-    tpl = {403: "403.html", 404: "404.html", 500: "500.html"}[code]
-    try:
-        return render_template(tpl), code
-    except Exception:
-        return jsonify(ok=False, code=code), code
-
+# ---------------- Ошибки ----------------
 @app.errorhandler(403)
 def e403(_e): return _json_err_page(403)
 @app.errorhandler(404)
@@ -2659,11 +747,23 @@ def e404(_e): return _json_err_page(404)
 @app.errorhandler(500)
 def e500(_e): return _json_err_page(500)
 
-# Инициализация БД при любом старте (python app.py и gunicorn app:app)
+def _json_err_page(code):
+    if request.path.startswith("/api/"):
+        msg = {403: "Forbidden", 404: "Not found", 500: "Internal server error"}[code]
+        return jsonify(ok=False, error="server_error" if code == 500 else "not_found",
+                       code=code, message=msg), code
+    tpl = {403: "403.html", 404: "404.html", 500: "500.html"}[code]
+    try:
+        return render_template(tpl, user=session.get("user")), code
+    except Exception:
+        return jsonify(ok=False, code=code), code
+
+# ---------------- старт ----------------
 init_db()
-with app.app_context(): _seed_categories()
+with app.app_context():
+    _seed_categories()
+    _migrate_public_ids()
 
 if __name__ == "__main__":
-    log.info("NetPulse: http://%s:%s | google_auth=%s | search=%s",
-             HOST, PORT, HAVE_GOOGLE_AUTH, bool(GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX))
+    log.info("Scuarfy Store: http://%s:%s | google_auth=%s", HOST, PORT, HAVE_GOOGLE_AUTH)
     app.run(host=HOST, port=PORT, debug=DEBUG)

@@ -1,75 +1,70 @@
-/* ===== Магазин приложений: главная страница (стиль Microsoft Store) ===== */
+/* ===== Scuarfy Store: главная страница (поиск, карточки, лайки, скачивание) ===== */
 (function(){
   if(!document.body.dataset.page.match(/^store(?!-admin)/)) return;
   const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
-  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc=window.escHTML;
 
-  let state={q:'',cat:'all',sort:'popular'};
+  let state={q:(window.SEED_Q||''),sort:'popular'};
   let timer=null;
 
   function starsHTML(rating,votes){
     const r=Math.round(rating||0);
     let s='';for(let i=1;i<=5;i++)s+='<span'+(i<=r?'':' class="dim"')+'>★</span>';
     return '<span class="stars" title="'+(rating?rating.toFixed(1):'нет оценок')+'">'+s+
-           (votes?' <b style="color:var(--muted-2);font-weight:500">('+votes+')</b>':'')+'</span>';
+           (votes?' <b style="color:var(--ink-2);font-weight:500">('+votes+')</b>':'')+'</span>';
   }
-  function iconHTML(a,cls){
-    if(a.icon_path) return '<div class="st-icon '+(cls||'')+'"><img src="'+esc(a.icon_path)+'" alt=""></div>';
-    const em=(a.category_emoji||'📦');
-    return '<div class="st-icon '+(cls||'')+'">'+em+'</div>';
+  function iconHTML(a){
+    if(a.icon_path) return '<div class="st-icon"><img src="'+esc(a.icon_path)+'" alt=""></div>';
+    return '<div class="st-icon">'+esc(a.category_emoji||'📦')+'</div>';
   }
   function cardHTML(a){
-    return '<div class="app-card glass" data-id="'+a.id+'">'+
+    return '<div class="app-card glass" data-pid="'+esc(a.public_id)+'">'+
       '<div class="row1">'+iconHTML(a)+
         '<div style="min-width:0"><div class="ttl">'+esc(a.title)+'</div>'+
         '<div class="pub">'+esc(a.publisher||'Неизвестный издатель')+'</div></div></div>'+
-      '<div class="tagline">'+esc(a.tagline||a.description||'').slice(0,140)+'</div>'+
+      '<div class="tagline">'+esc((a.tagline||a.description||'').slice(0,140))+'</div>'+
       '<div class="meta">'+starsHTML(a.rating,a.votes)+
+        '<span class="like-n'+(a.liked?' on':'')+'" title="Лайки">♥ '+a.likes+'</span>'+
         '<span>⬇ '+a.downloads+'</span><span>'+esc(a.size_h||'—')+'</span></div>'+
       (a.filename
-        ? '<a class="btn sm primary dl-btn" href="/api/store/apps/'+a.id+'/download">⬇ Скачать</a>'
+        ? '<a class="btn sm primary dl-btn" href="/api/store/apps/'+encodeURIComponent(a.public_id)+'/download">⬇ Скачать</a>'
         : '<button class="btn sm dl-btn" disabled>Нет файла</button>')+
     '</div>';
   }
-  function heroHTML(a){
-    return '<div class="hero-card" data-id="'+a.id+'"><div class="hc-body">'+
-      iconHTML(a)+'<div class="hc-title">'+esc(a.title)+'</div>'+
-      '<div class="hc-sub">'+esc(a.tagline||a.publisher||'')+'</div>'+
-      '<div class="hc-sub">'+starsHTML(a.rating,a.votes)+' · ⬇ '+a.downloads+'</div>'+
-    '</div></div>';
-  }
 
   async function load(){
-    const p=new URLSearchParams({q:state.q,category:state.cat,sort:state.sort});
+    const p=new URLSearchParams({q:state.q,sort:state.sort});
     const grid=$('#stGrid');
-    grid.innerHTML='<div style="grid-column:1/-1" class="qw-shimmer" ></div>'.repeat(0)+
-      '<small style="opacity:.6;grid-column:1/-1">Загрузка…</small>';
+    grid.innerHTML='<div class="st-loading">Загрузка…</div>';
     try{
       const j=await fetch('/api/store/apps?'+p,{credentials:'include'}).then(r=>r.json());
       if(!j.ok)throw new Error(j.error||'error');
       const items=j.items||[];
       $('#stEmpty').hidden=items.length>0;
       grid.innerHTML=items.map(cardHTML).join('');
-      // рекомендованные — только на «всё» без поиска
-      const feat=items.filter(a=>a.featured).slice(0,8);
-      $('#stFeaturedWrap').hidden=!feat.length;
-      $('#stFeatured').innerHTML=feat.map(heroHTML).join('');
-      $('#stListTitle').textContent = state.cat==='all' ? '📦 Все приложения'
-        : (state.cat+' ('+items.length+')');
-    }catch(e){grid.innerHTML='<small style="opacity:.6">Не удалось загрузить: '+esc(e.message)+'</small>';}
+      $('#stListTitle').textContent = state.q ? ('🔎 Результаты: «'+state.q+'»') : '📦 Все приложения';
+    }catch(e){grid.innerHTML='<div class="st-loading">Не удалось загрузить: '+esc(e.message)+'</div>';}
   }
 
-  /* первичная отрисовка из серверных данных (без мигания) */
-  if(window.STORE_SEED && window.STORE_SEED.length){
-    const items=window.STORE_SEED;
-    $('#stGrid').innerHTML=items.map(cardHTML).join('');
-    const feat=items.filter(a=>a.featured).slice(0,8);
-    $('#stFeaturedWrap').hidden=!feat.length;
-    $('#stFeatured').innerHTML=feat.map(heroHTML).join('');
+  /* первичная отрисовка из серверных данных */
+  if(window.STORE_SEED && window.STORE_SEED.length && !state.q){
+    $('#stGrid').innerHTML=window.STORE_SEED.map(cardHTML).join('');
+    if(window.STORE_SEED.length) load(); // добираем флаг liked и т.д.
   } else load();
 
-  /* события */
+  /* глобальный поиск в шапке — живой поиск на странице магазина */
+  const gq=$('#gq');
+  if(gq){
+    gq.addEventListener('input',e=>{
+      state.q=e.target.value.trim();
+      clearTimeout(timer);timer=setTimeout(load,300);
+    });
+    $('#globalSearch').addEventListener('submit',e=>{e.preventDefault();state.q=gq.value.trim();load();});
+    if(state.q) gq.value=state.q;
+  }
+
   document.addEventListener('click',async e=>{
+    /* кнопка скачивания — качаем файл без перехода на страницу */
     const dlA=e.target.closest('a.dl-btn');
     if(dlA){e.preventDefault();e.stopPropagation();
       const old=dlA.textContent; dlA.textContent='⬇ Скачивание…';
@@ -78,12 +73,12 @@
       try{ toast('Скачивание началось','ok'); }catch(_){}
       setTimeout(()=>{fr.remove();dlA.textContent=old;},2500);
       return;}
+    /* клик по карточке/герою → страница приложения (по публичному ID) */
     const card=e.target.closest('.app-card,.hero-card');
-    if(card){location.href='/store/app/'+card.dataset.id;return;}
+    if(card&&card.dataset.pid){location.href='/store/app/'+card.dataset.pid;return;}
+    /* сортировка */
     const sb=e.target.closest('#stSort button');
-    if(sb)$$('#stSort button').forEach(b=>{b.classList.toggle('on',b===sb);});
-    if(sb){state.sort=sb.dataset.sort;load();}
+    if(sb){$$('#stSort button').forEach(b=>b.classList.toggle('on',b===sb));
+      state.sort=sb.dataset.sort;load();}
   });
-  $('#stQ').addEventListener('input',e=>{state.q=e.target.value.trim();
-    clearTimeout(timer);timer=setTimeout(load,300);});
 })();

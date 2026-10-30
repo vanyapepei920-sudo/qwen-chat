@@ -1,45 +1,54 @@
-# NetPulse 🌐
+# Scuarfy Store 🛍
 
-Сетевой дашборд: ping, traceroute, DNS-тесты, скорость интернета, поиск, история, аккаунты.
-Основной проект (версия copied-netpulse) — Flask-сервер + SQLite.
+Полностью самостоятельный проект — магазин приложений с Google-входом, категориями,
+загрузкой файлов, скачиванием, лайками, отзывами, поиском и автоматическими рекомендациями.
+(Бывший NetPulse — переработан в отдельное приложение.)
 
-## Запуск локально
+## Возможности
+- **Вход через Google** (Google Identity Services) + демо-режим для тестов (`DEMO_LOGIN=True`).
+- **Собственный интерфейс** в стиле Microsoft Store: верхняя панель, вкладки, hero-карусель, плитки.
+- **Публичный 4-сегментный ID для каждого приложения** вида `a3f2-9c1be4-77ab2-1f09dc34-88ae5b21`
+  выдаётся автоматически при публикации; страница приложения — `/store/app/<ID>`.
+- **Поиск приложений** — живая строка поиска в шапке (по названию, издателю, описанию).
+- **Рекомендации** — формируются автоматически: больше всего лайков ♥, скачиваний ⬇ и хорошие отзывы ★
+  (формула: `likes*3 + downloads/5 + rating*votes`). Кнопки «рекомендовать» при публикации нет.
+- **Лайки, звёздочные оценки и текстовые отзывы** пользователей.
+- **Категории** с отдельными страницами (`/store/category/<id>`), управлением эмодзи.
+- **Администрирование**: загрузка .exe/.zip/.apk и других файлов (до `MAX_APP_SIZE_MB`),
+  редактирование карточек, замена файлов, удаление, управление категориями и администраторами.
 
-```bash
-python3 -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env            # заполните секреты
-python app.py                   # http://127.0.0.1:5000
+## Секретная активация админ-панели
+Кнопки админ-панели в интерфейсе **нет**. Переходите вручную:
+
+```
+/admin_streaker
 ```
 
-## Переменные окружения (.env)
+Там вводится пароль администратора (берётся из `ADMIN_PASSWORD` в `.env`,
+либо задаётся при первом вводе, если переменная пуста). После активации открывается
+`/store-admin` (тоже без публичных кнопок — только по прямой ссылке).
 
-| Переменная | Назначение |
-|---|---|
-| GOOGLE_CLIENT_ID / SECRET | Вход через Google (необязательно) |
-| GOOGLE_SEARCH_API_KEY / CX | Поиск (необязательно) |
-| FLASK_SECRET_KEY | Сессии (сгенерируйте длинную случайную строку) |
-| HOST / PORT | Адрес сервера (по умолчанию 127.0.0.1:5000) |
-
-## Публикация в интернет
-
-GitHub Pages умеет только статику, а NetPulse — это Python-сервер, поэтому публикуем на **Render** (бесплатно):
-
-1. Зарегистрируйтесь на https://render.com через GitHub;
-2. New → Web Service → выберите этот репозиторий (`vanyapepei920-sudo/qwen-chat`);
-3. Runtime: **Python 3**, Build command: `pip install -r requirements.txt`, Start command: `gunicorn app:app --bind 0.0.0.0:$PORT`;
-4. Добавьте переменные окружения из `.env.example` в разделе Environment;
-5. В `requirements.txt` уже есть gunicorn — после первого деплоя сайт получит адрес вида `https://netpulse.onrender.com`.
-
-Альтернатива: любой хостинг с Python (Railway, Fly.io, VPS).
+## Запуск
+```bash
+pip install -r requirements.txt
+cp .env .env.local        # при необходимости отредактируйте
+python app.py             # http://127.0.0.1:5000/store
+```
 
 ## Структура
+```
+app.py                  — всё приложение (Flask + SQLite instance/scuarfy.db)
+templates/              — base, store, store_app, store_category, store_admin, admin_streaker, auth, ошибки
+assets/css/scuarfy.css  — оформление
+assets/js/              — global.js, store.js, store_admin.js
+uploads/apps|icons      — файлы приложений и иконки
+```
 
-```
-app.py            — сервер (Flask): API, страницы, вход через Google, SQLite
-templates/        — HTML-страницы (Jinja2)
-assets/css, js/   — стили и скрипты фронта
-.env.example      — шаблон настроек
-requirements.txt  — зависимости
-```
+## Настройки (.env)
+| Переменная | Назначение |
+|---|---|
+| GOOGLE_CLIENT_ID | OAuth Client ID Google |
+| FLASK_SECRET_KEY | ключ сессий |
+| ADMIN_PASSWORD | пароль для /admin_streaker (пусто = задать при первом вводе) |
+| DEMO_LOGIN | True — разрешить демо-вход |
+| MAX_APP_SIZE_MB | лимит размера загружаемого файла |

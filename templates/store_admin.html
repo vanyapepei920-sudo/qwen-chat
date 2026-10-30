@@ -1,80 +1,75 @@
 {% extends "base.html" %}
-{% block title %}Админ-панель магазина — NetPulse{% endblock %}
+{% block title %}Админ-панель — Scuarfy Store{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/store.css') }}">
 <div class="store-wrap">
-  <div class="st-h"><h2>🛡 Админ-панель магазина приложений</h2><div class="spacer"></div>
-    <a class="btn sm ghost" href="/store">🛍 Открыть магазин</a>
-    <a class="btn sm ghost" href="/admin_streaker">🔑 Права</a></div>
+  <div class="st-h"><h2>🛠 Админ-панель Scuarfy Store</h2><div class="spacer"></div>
+    <a class="btn sm" href="/store">🛍 В магазин</a></div>
 
   <div class="sa-tabs" id="saTabs">
     <button class="sa-tab on" data-p="upload">⬆ Загрузить приложение</button>
-    <button class="sa-tab" data-p="apps">📦 Приложения ({{ apps|length }})</button>
-    <button class="sa-tab" data-p="cats">🗂 Категории ({{ cats|length }})</button>
-    <button class="sa-tab" data-p="admins">👑 Администраторы ({{ admins|length }})</button>
+    <button class="sa-tab" data-p="apps">📦 Приложения</button>
+    <button class="sa-tab" data-p="cats">🗂 Категории</button>
+    <button class="sa-tab" data-p="admins">👑 Администраторы</button>
   </div>
 
   <!-- ЗАГРУЗКА -->
-  <section class="card glass sa-panel" id="p-upload">
-    <div class="card-h"><h3>Новое приложение</h3><span class="tag">макс. {{ max_mb }} МБ</span></div>
+  <section class="card sa-panel" id="p-upload">
+    <div class="card-h"><h3>Новое приложение в магазине</h3></div>
     <form id="upForm" enctype="multipart/form-data">
       <div class="sa-form">
-        <label class="fld">Название *<input class="inp" name="title" required maxlength="120" placeholder="My App"></label>
-        <label class="fld">Издатель<input class="inp" name="publisher" maxlength="80" placeholder="NetPulse Studio"></label>
+        <label class="fld">Название *<input class="inp" name="title" maxlength="120" required></label>
+        <label class="fld">Издатель<input class="inp" name="publisher" maxlength="80"></label>
         <label class="fld">Версия<input class="inp" name="version" value="1.0" maxlength="30"></label>
-        <label class="fld">Категория
-          <select class="sel" name="category_id">
+        <label class="fld">Категория<select class="sel" name="category_id">
             <option value="">— без категории —</option>
             {% for c in cats %}<option value="{{ c.id }}">{{ c.emoji }} {{ c.name }}</option>{% endfor %}
           </select></label>
-        <label class="fld full">Краткое описание (витрина)<input class="inp" name="tagline" maxlength="200" placeholder="Одно предложение о приложении"></label>
-        <label class="fld full">Полное описание<textarea class="inp" name="description" rows="4" maxlength="5000" placeholder="Что умеет приложение…"></textarea></label>
-        <label class="fld full">Файл приложения *
-          <div class="file-drop" id="fdFile">📎 Нажмите, чтобы выбрать файл (.exe, .apk, .zip, …)
-            <input type="file" name="file" id="inFile" required></div></label>
+        <label class="fld full">Краткое описание<input class="inp" name="tagline" maxlength="200"></label>
+        <label class="fld full">Полное описание<textarea class="inp" name="description" rows="4"></textarea></label>
+        <label class="fld full">Файл приложения (.exe, .zip, .apk …)*
+          <span class="file-drop" id="fdFile">📎 Выберите файл (до {{ max_mb }} МБ)
+            <input type="file" name="file" id="inFile" required></span></label>
         <label class="fld full">Иконка (png/jpg/svg, необязательно)
-          <div class="file-drop" id="fdIcon">🖼 Выбрать иконку
-            <input type="file" name="icon" id="inIcon" accept="image/*"></div></label>
-        <label class="fld" style="flex-direction:row;align-items:center;gap:8px;color:var(--txt);font-size:13px">
-          <input type="checkbox" name="featured" value="1"> ⭐ Рекомендованное (крупная карточка)</label>
-        <div class="fld"><button class="btn primary" type="submit" id="upBtn">⬆ Загрузить в магазин</button></div>
+          <span class="file-drop" id="fdIcon">🖼 Выберите изображение
+            <input type="file" name="icon" id="inIcon" accept="image/*"></span></label>
+        <div class="fld full"><button class="btn primary" id="upBtn" type="submit">⬆ Загрузить в магазин</button></div>
       </div>
     </form>
+    <p style="font-size:12px;color:var(--ink-2);margin-top:10px">
+      При публикации приложению автоматически присваивается собственный публичный ID вида
+      <b>a3f2-9c1be4-77ab2-1f09dc34-88ae5b21</b>.</p>
   </section>
 
   <!-- ПРИЛОЖЕНИЯ -->
-  <section class="card glass sa-panel" id="p-apps" hidden>
-    <div class="card-h"><h3>Все приложения</h3></div>
-    <div style="overflow-x:auto">
-    <table class="sa-table">
-      <thead><tr><th>Приложение</th><th>Категория</th><th>Рейтинг</th><th>Скачиваний</th><th>Размер</th><th>Статус</th><th></th></tr></thead>
+  <section class="card sa-panel" id="p-apps" hidden>
+    <div class="card-h"><h3>Приложения магазина</h3></div>
+    <table class="sa-table"><thead><tr>
+      <th>Название</th><th>ID</th><th>Категория</th><th>♥</th><th>⬇</th><th>★</th><th>Размер</th><th></th></tr></thead>
       <tbody id="appsRows">
         {% for a in apps %}
         <tr data-id="{{ a.id }}">
-          <td><div class="mini">{% if a.icon_path %}<div class="st-icon"><img src="{{ a.icon_path }}" alt=""></div>
+          <td><div class="mini">
+            {% if a.icon_path %}<div class="st-icon"><img src="{{ a.icon_path }}" alt=""></div>
             {% else %}<div class="st-icon">{{ a.category_emoji or '📦' }}</div>{% endif %}
-            <div><b>{{ a.title }}</b><div style="font-size:11px;color:var(--muted)">{{ a.publisher }} · v{{ a.version }}</div></div></div></td>
+            <div style="min-width:0"><b>{{ a.title }}</b><br><small style="color:var(--ink-2)">{{ a.publisher or '—' }}</small></div>
+          </div></td>
+          <td style="font-family:ui-monospace,monospace;font-size:10.5px;color:var(--ink-2)">{{ a.public_id }}</td>
           <td>{{ a.category_name or '—' }}</td>
-          <td>{% if a.votes %}★ {{ '%.1f'|format(a.rating) }} ({{ a.votes }}){% else %}—{% endif %}</td>
-          <td><a href="/store/app/{{ a.id }}" title="Открыть страницу приложения" style="color:var(--acc2);text-decoration:none">{{ a.downloads }}</a></td>
+          <td>{{ a.likes }}</td><td>{{ a.downloads }}</td>
+          <td>{{ '%.1f'|format(a.rating) if a.votes else '—' }}</td>
           <td>{{ a.size_h }}</td>
-          <td>{% if a.featured %}<span class="badge good">⭐ реком.</span>{% endif %}
-              {% if not a.filename %}<span class="badge bad">нет файла</span>{% endif %}</td>
-          <td style="white-space:nowrap">
-            <button class="btn sm ghost" data-act="edit">✏</button>
-            <button class="btn sm ghost" data-act="file">📦</button>
-            <button class="btn sm danger" data-act="del">🗑</button></td>
+          <td style="white-space:nowrap;text-align:right">
+            <button class="sa-tab" data-act="edit">✏</button>
+            <button class="sa-tab" data-act="file">📦</button>
+            <button class="sa-tab" data-act="del" style="color:var(--bad)">🗑</button></td>
         </tr>
-        {% else %}
-        <tr><td colspan="7" style="color:var(--muted)">Пока пусто — загрузите первое приложение.</td></tr>
         {% endfor %}
-      </tbody>
-    </table>
-    </div>
+      </tbody></table>
+    {% if not apps %}<p style="color:var(--ink-2);font-size:13px;margin-top:10px">Пока нет ни одного приложения.</p>{% endif %}
 
-    <!-- форма редактирования -->
-    <div class="glass" id="editBox" style="margin-top:16px;padding:18px;border-radius:14px" hidden>
-      <div class="card-h"><h3>Редактирование: <span id="edTitle"></span></h3></div>
+    <!-- редактирование -->
+    <div class="card" id="editBox" style="margin-top:12px" hidden>
+      <div class="card-h"><h3>Редактировать: <span id="edTitle"></span></h3></div>
       <div class="sa-form">
         <label class="fld">Название<input class="inp" id="edName"></label>
         <label class="fld">Издатель<input class="inp" id="edPub"></label>
@@ -85,16 +80,14 @@
           </select></label>
         <label class="fld full">Краткое описание<input class="inp" id="edTag"></label>
         <label class="fld full">Полное описание<textarea class="inp" id="edDesc" rows="4"></textarea></label>
-        <label class="fld" style="flex-direction:row;align-items:center;gap:8px;color:var(--txt);font-size:13px">
-          <input type="checkbox" id="edFeat"> ⭐ Рекомендованное</label>
-        <div class="fld" style="flex-direction:row;gap:8px;display:flex">
+        <div class="fld full" style="display:flex;flex-direction:row;gap:8px">
           <button class="btn sm primary" id="edSave">💾 Сохранить</button>
-          <button class="btn sm ghost" id="edCancel">Отмена</button></div>
+          <button class="btn sm" id="edCancel">Отмена</button></div>
       </div>
     </div>
 
     <!-- замена файла -->
-    <div class="glass" id="fileBox" style="margin-top:12px;padding:16px;border-radius:14px" hidden>
+    <div class="card" id="fileBox" style="margin-top:12px" hidden>
       <div class="card-h"><h3>Заменить файл: <span id="fbTitle"></span></h3></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <input type="file" id="fbFile" class="inp" style="flex:1">
@@ -104,7 +97,7 @@
   </section>
 
   <!-- КАТЕГОРИИ -->
-  <section class="card glass sa-panel" id="p-cats" hidden>
+  <section class="card sa-panel" id="p-cats" hidden>
     <div class="card-h"><h3>Категории магазина</h3></div>
     <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
       <input class="inp" id="catName" placeholder="Название категории" maxlength="60" style="max-width:260px">
@@ -117,19 +110,19 @@
         <tr data-id="{{ c.id }}" data-name="{{ c.name }}" data-emoji="{{ c.emoji }}">
           <td style="font-size:18px">{{ c.emoji }}</td><td>{{ c.name }}</td>
           <td style="white-space:nowrap;text-align:right">
-            <button class="btn sm ghost" data-act="rename">✏</button>
-            <button class="btn sm danger" data-act="del">🗑</button></td>
+            <button class="sa-tab" data-act="rename">✏</button>
+            <button class="sa-tab" data-act="del" style="color:var(--bad)">🗑</button></td>
         </tr>
         {% endfor %}
       </tbody></table>
   </section>
 
   <!-- АДМИНИСТРАТОРЫ -->
-  <section class="card glass sa-panel" id="p-admins" hidden>
+  <section class="card sa-panel" id="p-admins" hidden>
     <div class="card-h"><h3>Администраторы магазина</h3></div>
-    <p style="color:var(--muted);font-size:12px;margin-bottom:12px">
+    <p style="color:var(--ink-2);font-size:12px;margin-bottom:12px">
       Выдать права можно пользователю, который хотя бы раз входил в систему.
-      Также любой пользователь может открыть себе права паролем на странице <a href="/admin_streaker" style="color:var(--acc2)">/admin_streaker</a>.</p>
+      Также любой пользователь может открыть себе права паролем на секретной странице <b>/admin_streaker</b>.</p>
     <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
       <input class="inp" id="admEmail" placeholder="email пользователя" style="max-width:300px">
       <button class="btn sm primary" id="admAdd">👑 Выдать права</button>
@@ -139,7 +132,7 @@
         {% for m in admins %}
         <tr data-id="{{ m.id }}" data-email="{{ m.user_email }}">
           <td>{{ m.user_name or '—' }}</td><td>{{ m.user_email }}</td><td>{{ m.created_at[:10] }}</td>
-          <td style="text-align:right"><button class="btn sm danger" data-act="revoke">Отозвать</button></td>
+          <td style="text-align:right"><button class="sa-tab" data-act="revoke" style="color:var(--bad)">Отозвать</button></td>
         </tr>
         {% endfor %}
       </tbody></table>
@@ -147,6 +140,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script>window.SA_DATA = {apps: {{ apps|tojson }}, cats: {{ cats|tojson }}};</script>
+<script>window.SA_DATA = {apps: {{ apps|tojson }}};</script>
 <script src="{{ url_for('static', filename='js/store_admin.js') }}"></script>
 {% endblock %}

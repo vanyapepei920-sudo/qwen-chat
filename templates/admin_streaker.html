@@ -1,62 +1,55 @@
 {% extends "base.html" %}
-{% block title %}Активация прав администратора — NetPulse{% endblock %}
+{% block title %}Scuarfy{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/store.css') }}">
-<div class="as-page">
-  <div class="as-card glass">
-    <div class="as-mark">🛡</div>
+<section class="as-page">
+  <div class="card as-card">
+    <div class="as-mark">🔐</div>
     {% if already %}
-      <h1>Права администратора активны</h1>
-      <p class="sub">Этот аккаунт уже является администратором магазина приложений.</p>
-      <div class="as-form">
-        <a class="btn primary" href="/store-admin">🚀 Открыть админ-панель</a>
-        <button class="btn ghost danger" id="deactBtn">Отключить права в этой сессии</button>
+      <h1>Доступ уже активирован</h1>
+      <p class="sub">Ваш аккаунт имеет права администратора Scuarfy Store.</p>
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+        <a class="btn primary" href="/store-admin">🛠 Открыть админ-панель</a>
+        <button class="btn" id="deactBtn">Отключить права на этом устройстве</button>
       </div>
+    {% elif not enabled %}
+      <h1>Страница недоступна</h1>
+      <p class="sub">Активация прав администратора ещё не настроена владельцем системы.</p>
+      <a class="btn" href="/store">← В магазин</a>
     {% else %}
-      <h1>Admin&nbsp;Streaker</h1>
-      <p class="sub">Секретная страница открытия прав администратора.<br>
-        Введите пароль — и вам станут доступны загрузка приложений и управление магазином.</p>
-      <form class="as-form" id="actForm" autocomplete="off">
-        <input class="inp" type="password" id="pwd" placeholder="Пароль администратора" required autofocus>
-        <button class="btn primary" type="submit" id="actBtn">🔓 Активировать права</button>
+      <h1>Активация прав администратора</h1>
+      <p class="sub">Введите пароль администратора, чтобы получить доступ к управлению Scuarfy Store.</p>
+      <form class="as-form" id="asForm">
+        <input class="inp" type="password" id="asPass" placeholder="Пароль" autocomplete="current-password" required>
+        <button class="btn primary" type="submit" id="asBtn">🔓 Активировать</button>
       </form>
-      <div class="as-hint">
-        {% if enabled %}
-          Пароль задан владельцем сервера (переменная <b>ADMIN_PASSWORD</b> в <b>.env</b>).
-        {% else %}
-          ⚙ Пароль ещё не задан. <b>Первый введённый пароль станет паролем администратора</b>
-          (сохраняется в базе только его хеш). Чтобы задать пароль заранее, добавьте
-          <b>ADMIN_PASSWORD=…</b> в файл <b>.env</b>.
-        {% endif %}
-      </div>
+      <div class="as-hint">Первый ввод пароля задаёт его как постоянный (если пароль не задан в .env).</div>
     {% endif %}
-    <p class="as-hint"><a href="/store" style="color:var(--muted)">← Вернуться в магазин</a></p>
   </div>
-</div>
+</section>
 {% endblock %}
 {% block scripts %}
 <script>
 (function(){
-  const f=document.getElementById('actForm');
-  if(f)f.onsubmit=async e=>{
-    e.preventDefault();
-    const btn=document.getElementById('actBtn');btn.disabled=true;btn.textContent='Проверка…';
-    try{
-      const r=await fetch('/api/store/activate',{method:'POST',credentials:'include',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({password:document.getElementById('pwd').value})});
-      const j=await r.json();
-      if(j.ok){toast(j.first_time?'Пароль установлен! Добро пожаловать, администратор 🎉':'Доступ разрешён','ok');
-        setTimeout(()=>location.href=j.redirect||'/store-admin',700);}
-      else{
-        const msg={wrong_password:'Неверный пароль',too_short:'Пароль слишком короткий (мин. 4 символа)',
-                   no_password_set:'Пароль не задан'}[j.error]||('Ошибка: '+(j.error||'?'));
-        toast(msg,'err');btn.disabled=false;btn.textContent='🔓 Активировать права';
-      }
-    }catch(err){toast('Сервер недоступен','err');btn.disabled=false;btn.textContent='🔓 Активировать права';}
+  const $=s=>document.querySelector(s);
+  const deact=$('#deactBtn');
+  if(deact)deact.onclick=async()=>{
+    await fetch('/api/store/deactivate',{method:'POST',credentials:'include'});
+    toast('Права отключены на этом устройстве','ok');
+    setTimeout(()=>location.href='/store',700);
   };
-  const d=document.getElementById('deactBtn');
-  if(d)d.onclick=async()=>{await fetch('/api/store/deactivate',{method:'POST',credentials:'include'});location.reload();};
+  const form=$('#asForm');
+  if(form)form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const btn=$('#asBtn'); btn.disabled=true; btn.textContent='Проверка…';
+    const r=await fetch('/api/store/activate',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({password:$('#asPass').value})});
+    const j=await r.json();
+    if(j.ok){toast('Права администратора активированы 🎉','ok');
+      setTimeout(()=>location.href=j.redirect||'/store-admin',700);}
+    else{toast(j.error==='wrong_password'?'Неверный пароль':'Ошибка активации','err');
+      btn.disabled=false; btn.textContent='🔓 Активировать';}
+  });
 })();
 </script>
 {% endblock %}
