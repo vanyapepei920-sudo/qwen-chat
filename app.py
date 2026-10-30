@@ -38,10 +38,11 @@ DEBUG              = os.getenv("FLASK_DEBUG", "False") == "True"
 SESSION_HOURS      = int(os.getenv("SESSION_LIFETIME_HOURS", "24"))
 HOST               = os.getenv("HOST", "127.0.0.1")
 PORT               = int(os.getenv("PORT", "5000"))
-MAX_APP_MB         = int(genv("MAX_APP_SIZE_MB", "300"))
+MAX_APP_GB         = int(genv("MAX_APP_SIZE_GB", "80"))   # максимальный размер файла приложения
 
-for d in ["assets/css", "assets/img/icons", "assets/js", "instance", "logs",
-          "templates", "uploads/apps", "uploads/icons"]:
+for d in ["assets/css", "assets/img/icons", "assets/img/brands", "assets/js", "instance", "logs",
+          "templates", "uploads/apps", "uploads/icons", "uploads/brands",
+          "uploads/requests", "uploads/chats"]:
     (BASE_DIR / d).mkdir(parents=True, exist_ok=True)
 
 DB_PATH  = BASE_DIR / "instance" / "scuarfy.db"
@@ -67,7 +68,9 @@ def inject_globals():
     return {"google_client_id": genv("GOOGLE_CLIENT_ID")}
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=SESSION_HOURS)
-app.config["MAX_CONTENT_LENGTH"] = MAX_APP_MB * 1024 * 1024
+# ~85 ГБ с запасом: лимит тела запроса чуть больше пользовательского лимита 80 ГБ,
+# чтобы точный ответ «файл больше 80 ГБ» отдавала наша проверка, а не Flask.
+app.config["MAX_CONTENT_LENGTH"] = int(MAX_APP_GB * 1.06 * 1024**3)
 _cors_origins = [f"http://{HOST}:{PORT}", f"https://{HOST}:{PORT}",
                  "http://localhost:5000", "http://127.0.0.1:5000",
                  f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"]
@@ -113,7 +116,24 @@ def init_db():
         category_id INTEGER, filename TEXT DEFAULT '', orig_name TEXT DEFAULT '',
         icon_path TEXT DEFAULT '', size INTEGER DEFAULT 0, downloads INTEGER DEFAULT 0,
         likes INTEGER DEFAULT 0, rating REAL DEFAULT 0, votes INTEGER DEFAULT 0,
+        brand_logo TEXT DEFAULT '', org_request_id INTEGER,
         created_at TEXT, updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS org_requests(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT UNIQUE NOT NULL DEFAULT '',
+        first_name TEXT NOT NULL, last_name TEXT NOT NULL,
+        org_name TEXT NOT NULL, org_type TEXT DEFAULT 'organization',
+        email TEXT NOT NULL, phone TEXT DEFAULT '', country TEXT DEFAULT '',
+        website TEXT DEFAULT '', app_name TEXT DEFAULT '', app_desc TEXT DEFAULT '',
+        message TEXT DEFAULT '', logo_path TEXT DEFAULT '', pdf_path TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending',
+        user_sub TEXT DEFAULT '', user_email TEXT DEFAULT '', user_name TEXT DEFAULT '',
+        admin_note TEXT DEFAULT '', decided_by TEXT DEFAULT '', decided_at TEXT DEFAULT '',
+        created_at TEXT);
+    CREATE TABLE IF NOT EXISTS ai_messages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_sub TEXT NOT NULL,
+        role TEXT NOT NULL, text TEXT DEFAULT '', created_at TEXT);
+    CREATE INDEX IF NOT EXISTS idx_ai_sub ON ai_messages(user_sub, id);
     CREATE TABLE IF NOT EXISTS store_admins(
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_sub TEXT UNIQUE NOT NULL,
         user_email TEXT DEFAULT '', user_name TEXT DEFAULT '', created_at TEXT);
@@ -159,6 +179,25 @@ def _migrate_public_ids():
             log.info("Миграция: выдано публичных ID %s приложениям", len(rows))
     except Exception as e:
         log.warning("migrate public ids: %s", e)
+
+def _migrate_columns():
+    """Добавляет недостающие колонки в старые БД (idempotent)."""
+    db = get_db()
+    def cols(table):
+        return {r["name"] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
+    scols = cols("store_apps")
+    for col, decl in [("brand_logo", "TEXT DEFAULT ''"), ("org_request_id", "INTEGER")]:
+        if col not in scols:
+            db.execute(f"ALTER TABLE store_apps ADD COLUMN {col} {decl}")
+    orcols = cols("org_requests")
+    for col, decl in [("uuid", "TEXT UNIQUE DEFAULT ''"), ("admin_note", "TEXT DEFAULT ''"),
+                      ("decided_by", "TEXT DEFAULT ''"), ("decided_at", "TEXT DEFAULT ''")]:
+        if col not in orcols:
+            try:
+                db.execute(f"ALTER TABLE org_requests ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError:
+                pass  # UNIQUE через ALTER не поддерживается — uuid заполняется при вставке
+    db.commit()
 
 # ---------------- Google / авторизация ----------------
 def _profile_from_payload(payload):
@@ -424,6 +463,36 @@ def _fmt_size(n):
         n /= 1024
     return f"{n:.1f} ТБ"
 
+# ---------------- Классы приложений (свои иконки-бейджи) ----------------
+APP_CLASSES = {
+    "bestseller": {"label": "Бестселлер",      "icon": "/assets/img/icons/class-bestseller.svg"},
+    "trending":   {"label": "На подъёме",       "icon": "/assets/img/icons/class-trending.svg"},
+    "new":        {"label": "Новинка",          "icon": "/assets/img/icons/class-new.svg"},
+    "choice":     {"label": "Выбор сообщества", "icon": "/assets/img/icons/class-choice.svg"},
+    "editor":     {"label": "Выбор редакции",   "icon": "/assets/img/icons/class-editor.svg"},
+    "verified":   {"label": "Проверенный издатель", "icon": "/assets/img/icons/class-verified.svg"},
+}
+
+def compute_app_class(a, rank_bestseller=None, rank_trending=None):
+    """Определяет «класс» приложения по лайкам, скачиваниям и отзывам."""
+    dl, likes, rating, votes = a.get("downloads") or 0, a.get("likes") or 0, a.get("rating") or 0, a.get("votes") or 0
+    if rank_bestseller is not None and rank_bestseller <= 3 and dl >= 5:
+        return "bestseller"
+    if rank_trending is not None and rank_trending <= 5 and likes + votes >= 3:
+        return "trending"
+    if votes >= 3 and rating >= 4.5:
+        return "choice"
+    age_days = 0
+    try:
+        age_days = (datetime.now() - datetime.fromisoformat(a.get("created_at", ""))).days
+    except Exception:
+        pass
+    if age_days <= 14:
+        return "new"
+    if dl >= 50:
+        return "editor"
+    return None
+
 def _recalc_rating(db, app_id):
     r = db.execute("SELECT AVG(stars) a, COUNT(*) c FROM app_reviews WHERE app_id=?", (app_id,)).fetchone()
     db.execute("UPDATE store_apps SET rating=COALESCE(?,0), votes=? WHERE id=?",
@@ -437,6 +506,27 @@ def _app_row_to_dict(r):
     d = dict(r)
     d["size_h"] = _fmt_size(d.get("size"))
     return d
+
+def attach_app_classes(apps):
+    """Проставляет app_class по всему магазину (топ по скачиваниям/лайкам, отзывы, новинки)."""
+    if not apps:
+        return apps
+    try:
+        db = get_db()
+        top_dl  = [x["id"] for x in db.execute(
+            "SELECT id FROM store_apps ORDER BY downloads DESC, likes DESC LIMIT 3").fetchall()]
+        top_act = [x["id"] for x in db.execute(
+            "SELECT id FROM store_apps ORDER BY (likes+votes) DESC, downloads DESC LIMIT 5").fetchall()]
+        rank_dl  = {aid: i + 1 for i, aid in enumerate(top_dl)}
+        rank_act = {aid: i + 1 for i, aid in enumerate(top_act)}
+    except Exception:
+        rank_dl, rank_act = {}, {}
+    for a in apps:
+        key = compute_app_class(a, rank_dl.get(a["id"]), rank_act.get(a["id"]))
+        a["app_class"] = key
+        a["class_label"] = APP_CLASSES[key]["label"] if key else ""
+        a["class_icon"] = APP_CLASSES[key]["icon"] if key else ""
+    return apps
 
 def _find_app(pid_or_id):
     """Находит приложение по публичному ID (строка) или внутреннему числовому id."""
@@ -487,7 +577,7 @@ def _store_apps_query(cat_name=None, cat_id=None, q="", sort="popular", limit=No
     except Exception as e:
         log.warning("apps query: %s", e)
         rows = []
-    return [_app_row_to_dict(r) for r in rows]
+    return attach_app_classes([_app_row_to_dict(r) for r in rows])
 
 def _get_category(cid):
     r = get_db().execute("SELECT * FROM app_categories WHERE id=?", (cid,)).fetchone()
@@ -495,6 +585,237 @@ def _get_category(cid):
 
 def _uid():
     return (session.get("user") or {}).get("db_id")
+
+def _save_image(fi, subdir):
+    """Сохраняет загруженное изображение (иконка/логотип), возвращает публичный путь."""
+    if not fi or not fi.filename:
+        return ""
+    ext = os.path.splitext(fi.filename)[1].lower()
+    if ext not in IMG_EXT:
+        return ""
+    rel = f"assets/img/{subdir}/" + uuid.uuid4().hex[:12] + ext
+    fi.save(BASE_DIR / rel)
+    return "/" + rel
+
+def _check_upload_size(f):
+    """Проверка лимита MAX_APP_GB без чтения всего файла в память."""
+    try:
+        pos = f.stream.tell(); f.stream.seek(0, os.SEEK_END)
+        size = f.stream.tell(); f.stream.seek(pos)
+    except Exception:
+        size = None
+    limit = MAX_APP_GB * 1024**3
+    if size is not None and size > limit:
+        return None, f"Файл больше максимально допустимого размера ({MAX_APP_GB} ГБ)"
+    return limit, None
+
+def _store_save_file(f):
+    """Сохраняет файл приложения на диск с проверкой размера. Возвращает (путь, ошибка)."""
+    safe = f"{uuid.uuid4().hex[:10]}_{_safe_name(f.filename)}"
+    dest = STORE_DIR / "apps" / safe
+    limit, err = _check_upload_size(f)
+    if err:
+        return None, err
+    written = 0
+    try:
+        with open(dest, "wb") as out:
+            while True:
+                chunk = f.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > limit:
+                    dest.unlink(missing_ok=True)
+                    return None, f"Файл больше максимально допустимого размера ({MAX_APP_GB} ГБ)"
+                out.write(chunk)
+    except Exception as e:
+        dest.unlink(missing_ok=True)
+        log.warning("save upload: %s", e)
+        return None, "Не удалось сохранить файл"
+    return dest, None
+
+# ---------------- Заявки организаций: PDF ----------------
+def _pdf_font_path():
+    for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+              "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+              "/data/data/com.termux/files/usr/share/fonts/dejavu-ttf/DejaVuSans.ttf",
+              str(BASE_DIR / "assets" / "fonts" / "DejaVuSans.ttf")]:
+        if os.path.isfile(p):
+            return p
+    return None
+
+def _make_request_pdf(req):
+    """Генерирует PDF-анкету заявки организации (fpdf2 + DejaVu для кириллицы)."""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        log.warning("fpdf2 не установлен — PDF заявки не сгенерирован (pip install fpdf2)")
+        return ""
+    req = dict(req)
+    rel = f"uploads/requests/{req['uuid']}.pdf"
+    path = BASE_DIR / rel
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(True, margin=18)
+    font = _pdf_font_path()
+    family = "Helvetica"
+    if font:
+        pdf.add_font("DejaVu", "", font)
+        bold = font.replace("DejaVuSans.ttf", "DejaVuSans-Bold.ttf")
+        pdf.add_font("DejaVu", "B", bold if os.path.isfile(bold) else font)
+        family = "DejaVu"
+    else:
+        # фолбэк без юникод-шрифта: транслитерация, чтобы PDF всё равно сгенерировался
+        tr = str.maketrans({"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z",
+            "и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t",
+            "у":"u","ф":"f","х":"h","ц":"ts","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"'",
+            "э":"e","ю":"yu","я":"ya"})
+        def T(s): return (s or "").translate(tr)
+        for k in ("first_name","last_name","org_name","email","phone","country","website",
+                  "app_name","app_desc","message","user_name","user_email"):
+            req[k] = T(str(req.get(k) or ""))
+    def row(label, value):
+        value = str(value or "").strip()
+        if not value: return
+        pdf.set_font(family, "B", 11); pdf.cell(58, 7, label, border=0)
+        pdf.set_font(family, "", 11); pdf.multi_cell(0, 7, value); pdf.ln(1)
+    pdf.add_page()
+    pdf.set_fill_color(15, 108, 189); pdf.rect(0, 0, 210, 30, "F")
+    pdf.set_y(7); pdf.set_text_color(255, 255, 255)
+    pdf.set_font(family, "B", 17); pdf.cell(0, 9, "Scuarfy Store: заявка организации", 0, 1, "C")
+    pdf.set_font(family, "", 10); pdf.cell(0, 6, "Запрос на публикацию приложений от имени организации", 0, 1, "C")
+    pdf.set_text_color(0, 0, 0); pdf.set_y(36)
+    pdf.set_font(family, "B", 13)
+    pdf.cell(0, 8, f"Номер заявки: {req['uuid']}", 0, 1); pdf.ln(2)
+    row("Тип заявителя:", "Игровая студия / игра" if req.get("org_type") == "game" else "Организация / компания")
+    row("ФИО контактного лица:", f'{req.get("last_name","")} {req.get("first_name","")}'.strip())
+    row("Название организации:", req.get("org_name"))
+    row("Email:", req.get("email"))
+    row("Телефон:", req.get("phone"))
+    row("Страна / регион:", req.get("country"))
+    row("Сайт:", req.get("website"))
+    row("Планируемое приложение:", req.get("app_name"))
+    row("Краткое описание приложения:", req.get("app_desc"))
+    row("Дополнительная информация:", req.get("message"))
+    row("Аккаунт отправителя:", f'{req.get("user_name","")} <{req.get("user_email","")}>')
+    row("Дата подачи заявки:", str(req.get("created_at","")).replace("T", " "))
+    row("Статус:", {"pending":"На рассмотрении","approved":"Одобрена","rejected":"Отклонена"}.get(req.get("status"), req.get("status")))
+    if req.get("admin_note"):
+        row("Комментарий администратора:", req.get("admin_note"))
+    pdf.ln(4)
+    pdf.set_draw_color(180, 180, 180); y = pdf.get_y(); pdf.line(15, y, 195, y)
+    pdf.ln(3); pdf.set_font(family, "", 9); pdf.set_text_color(110, 110, 110)
+    pdf.multi_cell(0, 5, "Документ сформирован автоматически в Scuarfy Store. "
+                   "Администратор рассматривает заявку в панели управления и принимает решение.")
+    try:
+        pdf.output(str(path))
+        return rel
+    except Exception as e:
+        log.warning("pdf output: %s", e)
+        return ""
+
+# ---------------- Чат ИИ-помощника (Pollinations) ----------------
+AI_SYSTEM_PROMPT = (
+    "Ты — Scuarfy, встроенный ИИ-помощник магазина приложений «Scuarfy Store». "
+    "Отвечай коротко, дружелюбно и по делу, на языке пользователя (обычно русский).\n"
+    "Знай о сервисе:\n"
+    "- Scuarfy Store — магазин приложений: пользователи скачивают приложения, ставят лайки, пишут отзывы со звёздами (1–5).\n"
+    "- Интерфейс в стиле Microsoft Store: главная /store с живым поиском, категориями и рекомендациями; отдельная страница приложения /store/app/<id>; отдельная страница категории /store/category/<id>.\n"
+    "- Рекомендации формируются автоматически: чем больше лайков, скачиваний и хороших отзывов у приложения, тем выше оно в подборке «Рекомендуем».\n"
+    "- Каждому приложению выдаётся собственный публичный ID вида a3f2-9c1be4-77ab2-1f09dc34-88ae5b21.\n"
+    "- Максимальный размер загружаемого файла приложения — 80 ГБ.\n"
+    "- Загружать приложения могут только администраторы через панель /store-admin. Секретная страница активации прав — /admin_streaker (пароль активации); кнопки админки в интерфейсе нет — переход вручную.\n"
+    "- Организации и игровые студии могут запросить права публиковать свои приложения: форма «Запрос прав организации» (/store/request-access): имя, фамилия, название организации, контакты, данные о приложении. Заявка оформляется в PDF и уходит администраторам на рассмотрение (принять/отклонить).\n"
+    "- Приложения получают классы-бейджи: Бестселлер, На подъёме, Новинка, Выбор сообщества.\n"
+    "- Вход через Google; пользователь может удалить или обновить только свой отзыв.\n"
+    "Не выдумывай функции, которых нет. Если вопрос не про Scuarfy Store — помоги кратко и верни разговор к сервису. "
+    "Пиши простыми строками, без markdown-заголовков."
+)
+
+_ai_lock = threading.Lock()
+_ai_last = {}
+
+def _ai_throttle(sub):
+    with _ai_lock:
+        now = time.time()
+        if now - _ai_last.get(sub, 0) < 3:
+            return False
+        _ai_last[sub] = now
+        return True
+
+def _pollinations_chat(messages):
+    """Чат через Pollinations (POST https://text.pollinations.ai/chat)."""
+    key = genv("POLLINATIONS_API_KEY")
+    payload = {"messages": messages, "model": genv("POLLINATIONS_MODEL", "openrouter/auto"),
+               "private": True, "referrer": "scuarfy-store"}
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    r = requests.post("https://text.pollinations.ai/chat", json=payload, headers=headers, timeout=(10, 90))
+    if r.status_code != 200:
+        log.warning("pollinations /chat -> HTTP %s: %s", r.status_code, r.text[:200])
+        return None
+    data = r.json()
+    content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+    if content:
+        return str(content).strip()
+    return (data.get("content") or data.get("response") or data.get("text") or "").strip() or None
+
+def _ollama_local(prompt):
+    """Локальный фолбэк: ollama (удобно на Termux без внешнего API)."""
+    try:
+        r = requests.post(genv("OLLAMA_URL", "http://127.0.0.1:11434") + "/api/chat",
+                          json={"model": genv("OLLAMA_MODEL", "llama3.2"),
+                                "messages": [{"role": "system", "content": AI_SYSTEM_PROMPT},
+                                             {"role": "user", "content": prompt}], "stream": False},
+                          timeout=(5, 120))
+        if r.status_code == 200:
+            return (r.json().get("message") or {}).get("content")
+    except Exception:
+        pass
+    return None
+
+def _rulebot_answer(q):
+    """Оффлайн-ответы, «обученные» на самом Scuarfy Store (когда ИИ-API недоступен)."""
+    ql = q.lower()
+    def has(*words): return any(w in ql for w in words)
+    if has("админ", "admin_streaker", "панель", "загрузить приложение", "выложить", "опубликовать"):
+        return ("Загружать приложения могут только администраторы. Откройте секретную страницу "
+                "/admin_streaker (кнопки в интерфейсе нет — введите адрес вручную), активируйте права "
+                "паролем — и станет доступна панель /store-admin с формой загрузки. Кнопка «рекомендовать» "
+                "при публикации не нужна: рекомендации считаются автоматически.")
+    if has("рекоменд", "подборк", "что нового", "совет"):
+        return ("В разделе «Рекомендуем» на главной показываются приложения с наибольшим числом лайков, "
+                "скачиваний и хорошими отзывами. Больше активности вокруг приложения — выше оно в подборке.")
+    if has("категор"):
+        return ("Категории создаются в админ-панели (вкладка «Категории»). У каждой категории своя страница "
+                "/store/category/<id> со списком приложений, поиском и сортировкой.")
+    if has("размер", "гб", "макс", "лимит", "gb", "big"):
+        return f"Максимальный размер файла приложения — {MAX_APP_GB} ГБ. Лимит проверяется при загрузке в админ-панели."
+    if has("id", "идентиф", "айди"):
+        return ("У каждого приложения собственный публичный ID вида a3f2-9c1be4-77ab2-1f09dc34-88ae5b21. "
+                "Он показывается на странице приложения, рядом есть кнопка копирования.")
+    if has("отзыв", "оценк", "звезд", "review"):
+        return ("На странице приложения поставьте 1–5 звёзд и напишите текст отзыва. Свой отзыв можно "
+                "обновить или удалить — рядом с ним есть кнопка удаления. Рейтинг пересчитывается автоматически.")
+    if has("скачать", "качать", "download"):
+        return ("Нажмите «Скачать» на карточке или странице приложения — файл сразу начнёт загружаться "
+                "на ваше устройство.")
+    if has("организ", "компани", "студи", "игр", "права", "заявк", "access"):
+        return ("Если вы организация или игровая студия, откройте «Запрос прав организации» "
+                "(кнопка внизу главной магазина или адрес /store/request-access). Заполните анкету: имя, "
+                "фамилия, название организации, контакты, данные о приложении. Анкета превращается в PDF "
+                "и попадает администраторам — они примут или отклонят заявку.")
+    if has("войти", "вход", "логин", "google", "аккаунт"):
+        return ("Вход выполняется через Google. Аккаунт нужен, чтобы скачивать приложения, ставить лайки "
+                "и писать отзывы.")
+    if has("поиск", "найти", "искать"):
+        return ("Поиск работает прямо на главной: начните вводить запрос в строку сверху — результаты "
+                "обновляются мгновенно по названию, издателю и описанию.")
+    if has("привет", "здравств", "hello", "hi", "помощь", "help", "кто ты", "что умеешь"):
+        return ("Привет! Я Scuarfy — помощник этого магазина. Рассказу, как скачивать приложения, "
+                "становиться администратором, получать права организации, как работают категории, "
+                "рекомендации, лайки и отзывы. Справайте!")
+    return None
 
 # ---------------- Страницы ----------------
 @app.route("/")
@@ -585,12 +906,16 @@ def admin_streaker():
 def store_admin():
     db = get_db()
     cats = [dict(r) for r in db.execute("SELECT * FROM app_categories ORDER BY name").fetchall()]
-    apps = [_app_row_to_dict(r) for r in db.execute(
+    apps = attach_app_classes([_app_row_to_dict(r) for r in db.execute(
         """SELECT a.*, c.name AS category_name FROM store_apps a
-           LEFT JOIN app_categories c ON c.id=a.category_id ORDER BY a.created_at DESC""").fetchall()]
+           LEFT JOIN app_categories c ON c.id=a.category_id ORDER BY a.created_at DESC""").fetchall()])
     admins = [dict(r) for r in db.execute("SELECT * FROM store_admins ORDER BY created_at").fetchall()]
+    reqs = [dict(r) for r in db.execute(
+        "SELECT * FROM org_requests ORDER BY (status='pending') DESC, created_at DESC").fetchall()]
+    pending_cnt = sum(1 for r in reqs if r["status"] == "pending")
     return render_template("store_admin.html", user=session["user"], page="store-admin",
-                           cats=cats, apps=apps, admins=admins, max_mb=MAX_APP_MB)
+                           cats=cats, apps=apps, admins=admins, max_gb=MAX_APP_GB,
+                           requests=reqs, pending_cnt=pending_cnt)
 
 # ---------------- API: авторизация ----------------
 @app.route("/api/auth/google", methods=["POST"])
@@ -822,17 +1147,12 @@ def store_admin_upload():
     if not title: return jsonify(ok=False, error="empty_title"), 400
     f = request.files.get("file")
     if not f or not f.filename: return jsonify(ok=False, error="no_file"), 400
-    safe = f"{uuid.uuid4().hex[:10]}_{_safe_name(f.filename)}"
-    dest = STORE_DIR / "apps" / safe
-    f.save(dest)
+    dest, err = _store_save_file(f)
+    if err: return jsonify(ok=False, error="too_large", message=err), 400
+    safe = dest.name
     size = dest.stat().st_size
-    icon_path = ""
-    fi = request.files.get("icon")
-    if fi and fi.filename:
-        ext = os.path.splitext(fi.filename)[1].lower()
-        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico"):
-            icon_path = "/assets/img/icons/" + uuid.uuid4().hex[:10] + ext
-            fi.save(BASE_DIR / icon_path.lstrip("/"))
+    icon_path = _save_image(request.files.get("icon"), "icons")
+    brand_logo = _save_image(request.files.get("brand_logo"), "brands")
     try: cid = int(request.form.get("category_id") or 0) or None
     except Exception: cid = None
     now = datetime.now().isoformat(timespec="seconds")
@@ -842,13 +1162,13 @@ def store_admin_upload():
         if not db.execute("SELECT 1 FROM store_apps WHERE public_id=?", (pid,)).fetchone(): break
     cur = db.execute(
         """INSERT INTO store_apps(public_id,title,publisher,description,tagline,version,category_id,
-           filename,orig_name,icon_path,size,created_at,updated_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           filename,orig_name,icon_path,size,brand_logo,created_at,updated_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (pid, title, (request.form.get("publisher") or "").strip()[:80],
          (request.form.get("description") or "").strip()[:5000],
          (request.form.get("tagline") or "").strip()[:200],
          (request.form.get("version") or "1.0").strip()[:30], cid, safe,
-         _safe_name(f.filename), icon_path, size, now, now))
+         _safe_name(f.filename), icon_path, size, brand_logo, now, now))
     db.commit()
     log.info("Store: uploaded app %s '%s' (%s)", pid, title, _fmt_size(size))
     return jsonify(ok=True, id=cur.lastrowid, public_id=pid)
