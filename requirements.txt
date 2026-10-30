@@ -1,8 +1,12 @@
 flask>=3.0.0
 flask-cors>=4.0.0
 python-dotenv>=1.0.0
-google-auth>=2.23.0
-gunicorn>=21.2.0
-PyJWT>=2.8.0
-cryptography>=42.0.0
 requests>=2.31.0
+# Опционально: ускоряют/усиливают верификацию Google-токена, но НЕ обязательны.
+# На Termux эти пакеты могут не собираться (Rust/C) — приложение автоматически
+# переключится на встроенную pure-python проверку подписи RS256.
+# google-auth>=2.23.0
+# PyJWT>=2.8.0
+# cryptography>=42.0.0
+# gunicorn — сервер для Render; на Termux запускайте python app.py (gunicorn не ставьте)
+# gunicorn>=21.2.0

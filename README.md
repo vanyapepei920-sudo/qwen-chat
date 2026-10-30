@@ -34,6 +34,28 @@ cp .env.example .env      # при необходимости отредакти
 python app.py             # http://127.0.0.1:5000/store
 ```
 
+## Запуск на Termux (Android)
+Проект полностью совместим с Termux — обязательные зависимости чисто питоновые,
+а тяжёлые пакеты (google-auth, PyJWT, cryptography, gunicorn) вынесены из
+`requirements.txt`: если они не установлены, приложение автоматически использует
+встроенную pure-python проверку подписи RS256 для Google-токенов.
+
+```bash
+pkg update && pkg upgrade
+pkg install python git
+git clone https://github.com/vanyapepei920-sudo/qwen-chat scuarfy-store
+cd scuarfy-store
+pip install -r requirements.txt   # google-auth ставить НЕ нужно
+cp .env.example .env              # заполните GOOGLE_CLIENT_ID и ADMIN_PASSWORD
+python app.py                     # http://127.0.0.1:5000/store
+```
+
+Вход через Google с телефона: в Google Cloud Console добавьте origin
+`http://127.0.0.1:5000` (и `http://localhost:5000`) в Authorized JavaScript origins.
+Если заходите по локальной сети, задайте `HOST=0.0.0.0` в `.env`.
+
+Совет: выполните `termux-wake-lock`, чтобы сервер не засыпал при сворачивании Termux.
+
 ## Структура
 ```
 app.py                  — всё приложение (Flask + SQLite instance/scuarfy.db)

@@ -166,6 +166,7 @@ def _jwt_decode_unverified(token):
     return b64(parts[0]), b64(parts[1])
 
 GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 _certs_cache = {"ts": 0, "certs": None}
 
 def _google_certs():
@@ -177,13 +178,83 @@ def _google_certs():
     _certs_cache.update(ts=time.time(), certs=certs)
     return certs
 
+# ---------- Чистый RSA-PKCS1-v1_5 верификатор без cryptography/google-auth ----------
+# Нужен для Termux/Android, где сборка cryptography (Rust) часто невозможна.
+_B64URL_PAD = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+def _rsa_verify_pkcs1_sha256(n: int, e: int, message: bytes, sig: bytes) -> bool:
+    """Проверка подписи RSA PKCS#1 v1.5 (SHA-256) на чистом Python."""
+    if len(sig) != (n.bit_length() + 7) // 8:
+        return False
+    s = pow(int.from_bytes(sig, "big"), e, n)
+    em = s.to_bytes((n.bit_length() + 7) // 8, "big")
+    digest = hashlib.sha256(message).digest()
+    # EMSA-PKCS1-v1_5: 0x00 0x01 <PS: 0xFF...> 0x00 || DigestInfo(SHA-256)
+    prefix = b"\x00\x01"
+    ff_len = len(em) - len(prefix) - 1 - len(digest) - 19
+    expected = prefix + b"\xff" * ff_len + b"\x00" + \
+        b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20" + digest
+    return em == expected
+
+def _verify_google_sig_purepy(token, cid):
+    """Верификация ID-токена Google без сторонних криптобиблиотек.
+    Возвращает профиль либо None; бросает исключение только при сетевых сбоях."""
+    h = _B64URL_PAD(token.split(".")[0])
+    d = _B64URL_PAD(token.split(".")[1]) if len(token.split(".")) > 1 else b""
+    if json.loads(h).get("alg") != "RS256":
+        return None
+    payload = json.loads(d)
+    aud = payload.get("aud")
+    aud_set = {aud} if isinstance(aud, str) else set(aud or [])
+    if payload.get("iss") not in ("https://accounts.google.com", "accounts.google.com"):
+        log.warning("google verify (pure-python): неверный iss=%s", payload.get("iss")); return None
+    if cid not in aud_set:
+        log.warning("google verify (pure-python): audience=%s не совпадает с GOOGLE_CLIENT_ID", aud); return None
+    if int(payload.get("exp", 0)) < time.time():
+        log.warning("google verify (pure-python): срок токена истёк"); return None
+    header = json.loads(h)
+    certs = _google_certs()
+    jwk = certs.get(header.get("kid"))
+    if not jwk:
+        log.warning("google verify (pure-python): kid=%s не найден в JWKS", header.get("kid")); return None
+    n = int.from_bytes(_B64URL_PAD(jwk["n"]), "big")
+    e = int.from_bytes(_B64URL_PAD(jwk["e"]), "big")
+    signing_input = token[:token.rfind(".")].encode()
+    sig = _B64URL_PAD(token[token.rfind(".") + 1:])
+    if not _rsa_verify_pkcs1_sha256(n, e, signing_input, sig):
+        log.warning("google verify (pure-python): подпись не прошла проверку"); return None
+    log.info("google verify: токен принят через pure-python RS256 (без cryptography/google-auth)")
+    return _profile_from_payload(payload)
+
+def _verify_google_tokeninfo(token, cid):
+    """Фолбэк через эндпоинт tokeninfo (подпись проверяет сам Google)."""
+    try:
+        r = requests.get(f"{GOOGLE_TOKENINFO_URL}?id_token={token}", timeout=10)
+        if r.status_code != 200:
+            log.warning("google verify (tokeninfo): HTTP %s", r.status_code); return None
+        data = r.json()
+        aud = data.get("aud")
+        aud_set = {aud} if isinstance(aud, str) else set(aud or [])
+        if data.get("iss") not in ("https://accounts.google.com", "accounts.google.com"):
+            log.warning("google verify (tokeninfo): неверный iss=%s", data.get("iss")); return None
+        if cid not in aud_set:
+            log.warning("google verify (tokeninfo): audience=%s не совпадает с GOOGLE_CLIENT_ID", aud); return None
+        exp = data.get("exp")
+        if exp and int(exp) < time.time():
+            log.warning("google verify (tokeninfo): срок токена истёк"); return None
+        log.info("google verify: токен принят через tokeninfo-фолбэк")
+        return _profile_from_payload(data)
+    except Exception as e:
+        log.warning("google verify (tokeninfo): %s", e)
+        return None
+
 def verify_google_token(token):
     cid = genv("GOOGLE_CLIENT_ID")
     if not token:
         log.warning("google verify: пустой credential"); return None
     if not cid:
         log.warning("google verify: GOOGLE_CLIENT_ID не настроен"); return None
-    # 1) Официальная библиотека (проверка подписи JWS и audience=client_id)
+    # 1) Официальная библиотека (если установлена — работает быстрее всех)
     if HAVE_GOOGLE_AUTH:
         try:
             info = _g_id_token.verify_oauth2_token(token, _g_requests.Request(), cid)
@@ -191,7 +262,13 @@ def verify_google_token(token):
             if p: return p
         except Exception as e:
             log.warning("google verify (google-auth): %s", e)
-    # 2) Фолбэк: PyJWT + JWKS (если google-auth не установлен или недоступен)
+    # 2) Pure-Python RS256 (работает на Termux без cryptography и google-auth)
+    try:
+        p = _verify_google_sig_purepy(token, cid)
+        if p: return p
+    except Exception as e:
+        log.warning("google verify (pure-python): %s", e)
+    # 3) PyJWT + JWKS (если cryptography всё же доступен)
     try:
         import jwt as _pyjwt
         header, data = _jwt_decode_unverified(token)
@@ -217,9 +294,12 @@ def verify_google_token(token):
             log.info("google verify: токен принят через PyJWT+JWKS-фолбэк")
             return p
     except ImportError:
-        log.warning("google verify: pyjwt не установлен — фолбэк недоступен")
+        pass
     except Exception as e:
         log.warning("google verify (jwks): %s", e)
+    # 4) Tokeninfo (последний резерв — проверка подписи на стороне Google)
+    p = _verify_google_tokeninfo(token, cid)
+    if p: return p
     return None
 
 def _upsert_user(p):
