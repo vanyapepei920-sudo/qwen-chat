@@ -670,23 +670,54 @@ def _ai_throttle(sub):
         _ai_last[sub] = now
         return True
 
+def _parse_llm_resp(data):
+    """Вытащить текст ответа из OpenAI-совместимого JSON или простого текста."""
+    if isinstance(data, dict):
+        try:
+            c = ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if c:
+                return str(c).strip()
+        except Exception:
+            pass
+        for k in ("content", "response", "text"):
+            v = data.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    elif isinstance(data, str) and data.strip():
+        return data.strip()
+    return None
+
 def _pollinations_chat(messages):
-    """Чат через Pollinations (POST https://text.pollinations.ai/chat)."""
+    """Чат через Pollinations. Эндпоинт /chat больше не существует (400/404
+    'Cannot POST /chat') — используем OpenAI-совместимый POST /openai, а также
+    GET /openai и корневой POST / как запасные варианты."""
     key = genv("POLLINATIONS_API_KEY")
-    payload = {"messages": messages, "model": genv("POLLINATIONS_MODEL", "openrouter/auto"),
+    model = genv("POLLINATIONS_MODEL", "openai")
+    base = genv("POLLINATIONS_URL", "https://text.pollinations.ai").rstrip("/")
+    payload = {"messages": messages, "model": model,
                "private": True, "referrer": "scuarfy-store"}
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    r = requests.post("https://text.pollinations.ai/chat", json=payload, headers=headers, timeout=(10, 90))
-    if r.status_code != 200:
-        log.warning("pollinations /chat -> HTTP %s: %s", r.status_code, r.text[:200])
-        return None
-    data = r.json()
-    content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
-    if content:
-        return str(content).strip()
-    return (data.get("content") or data.get("response") or data.get("text") or "").strip() or None
+    attempts = [("POST", base + "/openai", payload),
+                ("GET",  base + "/openai", payload),
+                ("POST", base + "/",       payload)]
+    for method, url, body in attempts:
+        try:
+            r = requests.request(method, url, json=body, headers=headers, timeout=(10, 90))
+        except Exception as e:
+            log.warning("pollinations %s %s -> %s", method, url, e)
+            continue
+        if r.status_code == 200:
+            try:
+                data = r.json()
+            except ValueError:
+                data = r.text
+            ans = _parse_llm_resp(data)
+            if ans:
+                return ans
+        log.warning("pollinations %s %s -> HTTP %s: %s", method, url, r.status_code, r.text[:150])
+    return None
 
 def _ollama_local(prompt):
     """Локальный фолбэк: ollama (удобно на Termux без внешнего API)."""
