@@ -132,17 +132,56 @@
     if(!q) return;
     inp.value=''; btn.disabled=true;
     addMsg(q,'me');
-    const typing = addMsg(' печатает…','bot'); typing.classList.add('typing');
+    // пустое сообщение бота, куда стримится ответ в реальном времени
+    const bot = addMsg('','bot');
+    const bubble = bot.querySelector('.bubble');
+    bubble.classList.add('typing');
+    let raw = '';
+    const paint = ()=>{
+      // markdown рендерим по мере поступления текста (код-блоки закрываем виртуально)
+      try { bubble.innerHTML = md(raw); } catch(_) { bubble.textContent = raw; }
+      box.scrollTop = box.scrollHeight;
+    };
     try{
-      const r = await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:q})});
-      const j = await r.json();
-      typing.remove();
-      if(j.ok){ addMsg(j.reply || '(пустой ответ)','bot',true); }
-      else { addMsg(j.message || j.error || 'Ошибка связи с ИИ','bot'); }
+      const r = await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message:q, stream:'1'})});
+      if(!r.ok || !r.body){
+        let j=null; try{ j = await r.json(); }catch(_){}
+        raw = (j && (j.message || j.hint)) || 'Ошибка связи с ИИ';
+        paint();
+      } else {
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while(true){
+          const {value, done} = await reader.read();
+          if(done) break;
+          buf += dec.decode(value, {stream:true});
+          let idx;
+          while((idx = buf.indexOf('\n\n')) >= 0){
+            const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+            for(const line of chunk.split('\n')){
+              const s = line.trim();
+              if(!s.startsWith('data:')) continue;
+              const payload = s.slice(5).trim();
+              if(!payload) continue;
+              try{
+                const obj = JSON.parse(payload);
+                if(obj.done) break;
+                if(obj.delta){ raw += obj.delta; paint(); }
+              }catch(_){ raw += payload; paint(); }
+            }
+          }
+        }
+        if(!raw){ raw = '(пустой ответ)'; paint(); }
+      }
     }catch(err){
-      typing.remove();
-      addMsg('Не удалось связаться с сервером.','bot');
-    }finally{ btn.disabled=false; inp.focus(); }
+      raw = raw || 'Не удалось связаться с сервером.';
+      paint();
+    }finally{
+      bubble.classList.remove('typing');
+      btn.disabled=false; inp.focus();
+    }
   });
 
   clr.addEventListener('click', async ()=>{

@@ -11,7 +11,7 @@ from functools import wraps
 import requests
 from dotenv import load_dotenv
 from flask import (Flask, render_template, request, jsonify, session,
-                   g, redirect, url_for, send_file, abort)
+                   g, redirect, url_for, send_file, abort, stream_with_context)
 from flask_cors import CORS
 
 try:
@@ -219,16 +219,49 @@ def _jwt_decode_unverified(token):
 
 GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+# Кэш JWKS держим долго (7 дней): ключи Google ротатируются редко, а при плохой
+# сети (Termux: "Network is unreachable" / read timeout) старые ключи позволяют
+# проверить подпись офлайн. При неизвестном kid кэш принудительно обновляется.
+CERTS_TTL = 7 * 24 * 3600
 _certs_cache = {"ts": 0, "certs": None}
+# Одноразовость id_token: Google-токен нельзя верифицировать дважды через
+# tokeninfo/повторно — защита от гонок двойной отправки и replay.
+_used_tokens = {}            # jti -> время использования
+_used_lock = threading.Lock()
 
-def _google_certs():
-    """Публичные ключи Google (кэшируются на 1 час)."""
-    if _certs_cache["certs"] and time.time() - _certs_cache["ts"] < 3600:
+def _token_once(token):
+    """True, если токен ещё не использовался; иначе False (защита от повторной
+    отправки одноразового credential браузером)."""
+    try:
+        key = hashlib.sha256(token.encode()).hexdigest()[:32]
+    except Exception:
+        return True
+    now = time.time()
+    with _used_lock:
+        # чистим устаревшие записи старше 30 минут
+        for k in [k for k, t in _used_tokens.items() if now - t > 1800]:
+            _used_tokens.pop(k, None)
+        if key in _used_tokens:
+            return False
+        _used_tokens[key] = now
+        return True
+
+def _google_certs(force=False):
+    """Публичные ключи Google (длительный кэш + оффлайн-устойчивость)."""
+    if not force and _certs_cache["certs"] and time.time() - _certs_cache["ts"] < CERTS_TTL:
         return _certs_cache["certs"]
-    r = requests.get(GOOGLE_CERTS_URL, timeout=10); r.raise_for_status()
-    certs = {c["kid"]: c for c in r.json().get("keys", [])}
-    _certs_cache.update(ts=time.time(), certs=certs)
-    return certs
+    try:
+        r = requests.get(GOOGLE_CERTS_URL, timeout=(15, 30)); r.raise_for_status()
+        certs = {c["kid"]: c for c in r.json().get("keys", [])}
+        if certs:
+            _certs_cache.update(ts=time.time(), certs=certs)
+        return certs
+    except Exception as e:
+        log.warning("google certs fetch: %s%s", e,
+                    " (использую кэш)" if _certs_cache["certs"] else "")
+        if _certs_cache["certs"]:      # сеть недоступна — работаем по старому кэшу
+            return _certs_cache["certs"]
+        raise
 
 # ---------- Чистый RSA-PKCS1-v1_5 верификатор без cryptography/google-auth ----------
 # Нужен для Termux/Android, где сборка cryptography (Rust) часто невозможна.
@@ -280,8 +313,8 @@ def _verify_google_sig_purepy(token, cid):
     certs = _google_certs()
     jwk = certs.get(header.get("kid"))
     if not jwk:
-        _certs_cache["ts"] = 0  # ключи могли ротироваться — сбрасываем кэш и пробуем ещё раз
-        certs = _google_certs()
+        # kid мог ротироваться — принудительно обновляем JWKS один раз
+        certs = _google_certs(force=True)
         jwk = certs.get(header.get("kid"))
     if not jwk:
         log.warning("google verify (pure-python): kid=%s не найден в JWKS", header.get("kid")); return None
@@ -297,7 +330,7 @@ def _verify_google_sig_purepy(token, cid):
 def _verify_google_tokeninfo(token, cid):
     """Фолбэк через эндпоинт tokeninfo (подпись проверяет сам Google)."""
     try:
-        r = requests.get(f"{GOOGLE_TOKENINFO_URL}?id_token={token}", timeout=10)
+        r = requests.get(f"{GOOGLE_TOKENINFO_URL}?id_token={token}", timeout=(15, 30))
         if r.status_code != 200:
             log.warning("google verify (tokeninfo): HTTP %s", r.status_code); return None
         data = r.json()
@@ -322,6 +355,12 @@ def verify_google_token(token):
         log.warning("google verify: пустой credential"); return None
     if not cid:
         log.warning("google verify: GOOGLE_CLIENT_ID не настроен"); return None
+    # 0) Одноразовость: Google id_token — credential «на один раз». Если браузер
+    # повторно отправил тот же токен (двойной клик/гонка), верификация через
+    # внешние эндпоинты уже не сработает — сразу понятная ошибка.
+    if not _token_once(token):
+        log.warning("google verify: этот токен уже был использован (повторная отправка)")
+        return "USED"
     # 1) Официальная библиотека (если установлена — работает быстрее всех)
     if HAVE_GOOGLE_AUTH:
         try:
@@ -706,6 +745,57 @@ def _sanitize_llm(ans, q):
                 "запросить права организации или активировать админ-права через /admin_streaker.")
     return ans
 
+def _pollinations_chat_stream(messages):
+    """Стриминг ответа Pollinations (SSE/OpenAI-совместимый). Генератор,
+    выдающий куски текста по мере генерации. Возвращает [] если стриминг
+    недоступен — вызывающий должен пасть на обычный _pollinations_chat."""
+    key = genv("POLLINATIONS_API_KEY")
+    model = genv("POLLINATIONS_MODEL", "openai")
+    base = genv("POLLINATIONS_URL", "https://text.pollinations.ai").rstrip("/")
+    payload = {"messages": messages, "model": model, "stream": True,
+               "private": True, "referrer": "scuarfy-store", "temperature": 0.5}
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    got_any = False
+    try:
+        with requests.post(base + "/openai", json=payload, headers=headers,
+                           timeout=(15, 120), stream=True) as r:
+            if r.status_code != 200:
+                log.warning("pollinations stream -> HTTP %s", r.status_code)
+                return
+            ctype = r.headers.get("Content-Type", "")
+            if "event-stream" not in ctype and "json" not in ctype and "text" not in ctype:
+                log.warning("pollinations stream: неожиданный content-type %s", ctype)
+                return
+            for raw in r.iter_lines(decode_unicode=True):
+                if not raw:
+                    continue
+                line = raw.strip()
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if not line:
+                    continue
+                if line == "[DONE]":
+                    return
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    # не JSON — возможно, просто текстовые чанки
+                    yield line
+                    got_any = True
+                    continue
+                delta = (((obj.get("choices") or [{}])[0]).get("delta") or {}).get("content")
+                if delta is None:
+                    delta = ((obj.get("choices") or [{}])[0].get("message") or {}).get("content")
+                if delta:
+                    got_any = True
+                    yield str(delta)
+    except Exception as e:
+        log.warning("pollinations stream error: %s", e)
+    if not got_any:
+        log.info("pollinations stream: ничего не получено — фолбэк на обычный запрос")
+
 def _pollinations_chat(messages):
     """Чат через Pollinations. Эндпоинт /chat больше не существует (400/404
     'Cannot POST /chat') — используем OpenAI-совместимый POST /openai, а также
@@ -724,7 +814,7 @@ def _pollinations_chat(messages):
                 ("POST", base + "/",       payload)]
     for method, url, body in attempts:
         try:
-            r = requests.request(method, url, json=body, headers=headers, timeout=(10, 90))
+            r = requests.request(method, url, json=body, headers=headers, timeout=(15, 90))
         except Exception as e:
             log.warning("pollinations %s %s -> %s", method, url, e)
             continue
@@ -938,6 +1028,11 @@ def auth_google():
         log.warning("auth/google: credential отсутствует в запросе")
         return jsonify(ok=False, error="missing_credential"), 400
     p = verify_google_token(cred)
+    if p == "USED":
+        # Этот credential уже был принят другим запросом (двойной клик/повтор).
+        log.info("auth/google: повторная отправка того же токена — просим войти заново")
+        return jsonify(ok=False, error="token_reused",
+                       hint="Этот Google-токен уже был использован. Обновите страницу и нажмите «Войти через Google» ещё раз"), 409
     if not p:
         #диагностика: логируем claims без проверки подписи (только iss/aud/exp — не секреты)
         diag = ""
@@ -1208,6 +1303,7 @@ def ai_chat():
     db = get_db()
     now = datetime.now().isoformat(timespec="seconds")
     db.execute("INSERT INTO ai_messages(user_sub,role,text,created_at) VALUES(?,?,?,?)", (sub, "user", q, now))
+    db.commit()
     # контекст последних реплик (до 10)
     ctx = [dict(r) for r in db.execute(
         "SELECT role,text FROM ai_messages WHERE user_sub=? ORDER BY id DESC LIMIT 10", (sub,)).fetchall()][::-1]
@@ -1215,6 +1311,49 @@ def ai_chat():
     for m in ctx:
         messages.append({"role": m["role"] if m["role"] in ("user", "assistant") else "user",
                          "content": m["text"]})
+
+    def _save_answer(answer, source):
+        db.execute("INSERT INTO ai_messages(user_sub,role,text,created_at) VALUES(?,?,?,?)",
+                   (sub, "assistant", answer, datetime.now().isoformat(timespec="seconds")))
+        db.commit()
+
+    stream_wanted = str(d.get("stream") or "").lower() in ("1", "true", "yes", "sse")
+
+    if stream_wanted:
+        # SSE-ответ: куски текста в реальном времени + фолбэк на не-стриминг
+        def gen():
+            collected = []
+            try:
+                for piece in _pollinations_chat_stream(messages):
+                    collected.append(piece)
+                    payload = json.dumps({"delta": piece}, ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+            except Exception as e:
+                log.warning("ai stream: %s", e)
+            answer = _sanitize_llm("".join(collected).strip(), None) if collected else None
+            source = "pollinations"
+            if not answer:
+                try:
+                    answer = _pollinations_chat(messages)
+                except Exception as e:
+                    log.warning("pollinations chat: %s", e)
+            if not answer and genv("OLLAMA_FALLBACK", "").lower() in ("1", "true", "yes"):
+                answer = _ollama_local(q)
+                if answer: source = "ollama"
+            if not answer:
+                answer = _rulebot_answer(q) or ("Похоже, ИИ-сервис временно недоступен. Я оффлайн-ассистент Scuarfy Store: "
+                    "могу рассказать про скачивание приложений, категории, рекомендации, отзывы, права администратора "
+                    "(/admin_streaker) и запрос прав организации (/store/request-access). Попробуйте ещё раз чуть позже.")
+                source = "offline"
+            _save_answer(answer, source)
+            # если стриминг не дал кусков — отправляем весь ответ одним чанком
+            if not collected:
+                payload = json.dumps({"delta": answer}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            yield f"data: {json.dumps({'done': True, 'source': source}, ensure_ascii=False)}\n\n"
+        return app.response_class(stream_with_context(gen()), mimetype="text/event-stream",
+                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     answer, source = None, None
     try:
         answer = _pollinations_chat(messages)
@@ -1229,9 +1368,7 @@ def ai_chat():
             "могу рассказать про скачивание приложений, категории, рекомендации, отзывы, права администратора "
             "(/admin_streaker) и запрос прав организации (/store/request-access). Попробуйте ещё раз чуть позже.")
         source = "offline"
-    db.execute("INSERT INTO ai_messages(user_sub,role,text,created_at) VALUES(?,?,?,?)",
-               (sub, "assistant", answer, datetime.now().isoformat(timespec="seconds")))
-    db.commit()
+    _save_answer(answer, source)
     return jsonify(ok=True, reply=answer, source=source)
 
 @app.route("/api/ai/history", methods=["DELETE"])
