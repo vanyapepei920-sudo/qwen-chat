@@ -739,7 +739,13 @@ def _sanitize_llm(ans, q):
     """Не выпускать наружу оффтоп-болтовню модели про OpenAI/GPT и т.п."""
     if not ans:
         return None
-    if _OFFTOPIC_RE.search(ans):
+    a = ans.strip()
+    # модель отказалась отвечать / извинилась вместо ответа — считаем ответ пустым,
+    # чтобы вызывающий код применил фолбэк (обычный запрос / rulebot), а не показал заглушку
+    if len(a) < 60 and re.search(r"(sorry|i can'?t|i cannot|не могу|извини|not allowed)", a, re.I):
+        log.info("llm refusal sanitized: %r", a[:80])
+        return None
+    if _OFFTOPIC_RE.search(a):
         return ("Я **Scuarfy** — ИИ-помощник магазина приложений Scuarfy Store 🙂\n"
                 "Спрошу лучше про сервис: как скачать приложение, оставить отзыв, "
                 "запросить права организации или активировать админ-права через /admin_streaker.")
@@ -1340,16 +1346,20 @@ def ai_chat():
         # ВАЖНО: внутри генератора НЕ используем Flask-объекты (g.db, session) —
         # request-контекст закрывается до того, как браузер дочитает поток.
         def gen():
+            # Куски стрима буферизуются и отправляются клиенту только ПОСЛЕ того,
+            # как ответ прошёл санитайзер — иначе модель может «протечь» отказом
+            # ("Sorry!") или оффтопом про OpenAI прямо в поток.
             collected = []
             try:
                 for piece in _pollinations_chat_stream(messages):
                     collected.append(piece)
-                    yield "data: " + _safe_sse({"delta": piece}) + "\n\n"
             except Exception as e:
                 log.warning("ai stream: %s", e)
             answer = _sanitize_llm("".join(collected).strip(), None) if collected else None
             source = "pollinations"
+            streamed_ok = bool(answer)
             if not answer:
+                # стрим не дал валидного ответа (пусто/отказ модели) — фолбэк на обычный запрос
                 try:
                     answer = _pollinations_chat(messages)
                 except Exception as e:
@@ -1362,8 +1372,12 @@ def ai_chat():
                     "могу рассказать про скачивание приложений, категории, рекомендации, отзывы, права администратора "
                     "(/admin_streaker) и запрос прав организации (/store/request-access). Попробуйте ещё раз чуть позже.")
                 source = "offline"
-            # если стриминг не дал кусков — отправляем весь ответ одним чанком
-            if not collected:
+            if streamed_ok:
+                # отдаём куски по одному — вывод в реальном времени
+                for piece in collected:
+                    yield "data: " + _safe_sse({"delta": piece}) + "\n\n"
+            else:
+                # валидный ответ получен из фолбэка — отправляем целиком одним чанком
                 yield "data: " + _safe_sse({"delta": answer}) + "\n\n"
             # сохраняем ответ в БД ДО отправки финального события done —
             # так запись точно произойдёт, даже если клиент мгновенно закроет соединение
