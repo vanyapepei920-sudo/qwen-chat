@@ -655,8 +655,13 @@ AI_SYSTEM_PROMPT = (
     "- Организации и игровые студии могут запросить права публиковать свои приложения: форма «Запрос прав организации» (/store/request-access): имя, фамилия, название организации, контакты, данные о приложении. Заявка сохраняется в базе и видна администраторам в панели /store-admin (вкладка «Заявки») — PDF не используется, заявку можно принять или отклонить прямо там.\n"
     "- Приложения получают классы-бейджи: Бестселлер, На подъёме, Новинка, Выбор сообщества.\n"
     "- Вход через Google; пользователь может удалить или обновить только свой отзыв.\n"
-    "Не выдумывай функции, которых нет. Если вопрос не про Scuarfy Store — помоги кратко и верни разговор к сервису. "
-    "Пиши простыми строками, без markdown-заголовков."
+    "Не выдумывай функции, которых нет. Ты НЕ OpenAI, НЕ ChatGPT и НЕ другая модель — тебя зовут Scuarfy, "
+    "ты помощник именно этого магазина приложений. На вопросы «кто ты / какая модель» отвечай: «Я Scuarfy, "
+    "ИИ-помощник Scuarfy Store». Не предлагай рассказать про OpenAI, GPT и подобные темы — перевод разговор "
+    "на возможности магазина. Отвечай на языке пользователя (обычно русский), коротко и по делу.\n"
+    "Форматирование: интерфейс понимает markdown — выделяй **важные слова** жирным, а примеры кода, команды "
+    "и пути оформляй блоками в тройных обратных кавычках (```python ... ```). Не используй markdown-заголовки "
+    "с решёткой (#)."
 )
 
 _ai_lock = threading.Lock()
@@ -687,6 +692,20 @@ def _parse_llm_resp(data):
         return data.strip()
     return None
 
+_OFFTOPIC_RE = re.compile(
+    r"openai|chatgpt|\bGPT[-\s]?[0-9]|language model|as an ai|я \-? (?:языковая модель|искусственный интеллект)",
+    re.I)
+
+def _sanitize_llm(ans, q):
+    """Не выпускать наружу оффтоп-болтовню модели про OpenAI/GPT и т.п."""
+    if not ans:
+        return None
+    if _OFFTOPIC_RE.search(ans):
+        return ("Я **Scuarfy** — ИИ-помощник магазина приложений Scuarfy Store 🙂\n"
+                "Спрошу лучше про сервис: как скачать приложение, оставить отзыв, "
+                "запросить права организации или активировать админ-права через /admin_streaker.")
+    return ans
+
 def _pollinations_chat(messages):
     """Чат через Pollinations. Эндпоинт /chat больше не существует (400/404
     'Cannot POST /chat') — используем OpenAI-совместимый POST /openai, а также
@@ -695,7 +714,8 @@ def _pollinations_chat(messages):
     model = genv("POLLINATIONS_MODEL", "openai")
     base = genv("POLLINATIONS_URL", "https://text.pollinations.ai").rstrip("/")
     payload = {"messages": messages, "model": model,
-               "private": True, "referrer": "scuarfy-store"}
+               "private": True, "referrer": "scuarfy-store",
+               "temperature": 0.5}
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
@@ -713,7 +733,7 @@ def _pollinations_chat(messages):
                 data = r.json()
             except ValueError:
                 data = r.text
-            ans = _parse_llm_resp(data)
+            ans = _sanitize_llm(_parse_llm_resp(data), None)
             if ans:
                 return ans
         log.warning("pollinations %s %s -> HTTP %s: %s", method, url, r.status_code, r.text[:150])
@@ -728,7 +748,7 @@ def _ollama_local(prompt):
                                              {"role": "user", "content": prompt}], "stream": False},
                           timeout=(5, 120))
         if r.status_code == 200:
-            return (r.json().get("message") or {}).get("content")
+            return _sanitize_llm((r.json().get("message") or {}).get("content"), None)
     except Exception:
         pass
     return None

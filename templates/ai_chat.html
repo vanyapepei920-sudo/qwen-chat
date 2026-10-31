@@ -17,7 +17,7 @@
     {% if history %}
       {% for m in history %}
       <div class="msg {{ 'me' if m.role=='user' else 'bot' }}">
-        <div class="bubble">{{ m.text }}</div>
+        <div class="bubble" data-raw="{{ m.text }}">{% if m.role=='user' %}{{ m.text }}{% endif %}</div>
       </div>
       {% endfor %}
     {% else %}
@@ -44,6 +44,14 @@
 .msg.bot .bubble{background:rgba(124,92,255,.15);border:1px solid rgba(124,92,255,.3)}
 .msg.me .bubble{background:rgba(34,211,238,.14);border:1px solid rgba(34,211,238,.3)}
 .typing .bubble{color:#9ab;font-style:italic}
+.bubble code{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);padding:1px 6px;border-radius:6px;font-family:ui-monospace,Consolas,monospace;font-size:.92em;word-break:break-word}
+.code-block{position:relative;margin:8px 0}
+.code-block pre{margin:0;background:#0d1220;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:12px 12px 12px;overflow:auto}
+.code-block code{display:block;background:none;border:none;padding:0;font-size:13px;line-height:1.5;white-space:pre}
+.code-lang{font-size:11px;color:#8ab;margin-bottom:2px;font-family:ui-monospace,monospace}
+.copy-btn{position:absolute;top:20px;right:8px;padding:2px 8px;font-size:11px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#cde;cursor:pointer}
+.copy-btn:hover{background:rgba(255,255,255,.18)}
+.bubble strong{font-weight:700;color:#fff}
 .ai-input{display:flex;gap:10px;margin-top:12px}
 .ai-input input{flex:1;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:inherit;font-size:15px}
 .ai-input input:focus{outline:none;border-color:#7c5cff}
@@ -59,16 +67,64 @@
   const btn = document.getElementById('ai-send');
   const clr = document.getElementById('ai-clear');
 
-  function addMsg(text, who){
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+  // Мини-markdown: ```код``` (с кнопкой «Копировать»), `строчный код`, **жирный**
+  function md(text){
+    const parts = String(text).split('```');
+    let html = '';
+    for(let i=0;i<parts.length;i++){
+      if(i % 2 === 1){ // блок кода
+        let code = parts[i], lang = '';
+        const nl = code.indexOf('\n');
+        if(nl > -1 && nl < 30){
+          const first = code.slice(0,nl).trim().toLowerCase();
+          if(first && /^[a-z0-9+#._-]{1,20}$/.test(first)){ lang = first; code = code.slice(nl+1); }
+        }
+        if(code.endsWith('\n')) code = code.slice(0,-1);
+        html += '<div class="code-block">'
+             + (lang ? '<div class="code-lang">'+esc(lang)+'</div>' : '')
+             + '<button class="copy-btn" title="Копировать код">📋 Копировать</button>'
+             + '<pre><code>'+esc(code)+'</code></pre></div>';
+      } else {
+        let t = esc(parts[i]);
+        t = t.replace(/`([^`\n]+)`/g, '<code>$1</code>');            // инлайн-код
+        t = t.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>'); // жирный
+        html += t;
+      }
+    }
+    return html;
+  }
+
+  document.addEventListener('click', e=>{
+    const btn = e.target.closest('.copy-btn');
+    if(!btn) return;
+    const code = btn.parentElement.querySelector('code');
+    const txt = code ? code.textContent : '';
+    const done = ()=>{ btn.textContent='✔ Скопировано'; setTimeout(()=>btn.textContent='📋 Копировать',1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(done).catch(()=>{});
+    } else {
+      const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta);
+      ta.select(); try{document.execCommand('copy');}catch(_){}; ta.remove(); done();
+    }
+  });
+
+  function addMsg(text, who, asHtml){
     const d = document.createElement('div');
     d.className = 'msg ' + (who==='me'?'me':'bot');
     const b = document.createElement('div');
     b.className = 'bubble';
-    b.textContent = text;
+    if(asHtml) b.innerHTML = md(text); else b.textContent = text;
     d.appendChild(b); box.appendChild(d);
     box.scrollTop = box.scrollHeight;
     return d;
   }
+
+  // рендер истории бота через markdown
+  box.querySelectorAll('.msg.bot .bubble[data-raw]').forEach(b=>{
+    b.innerHTML = md(b.getAttribute('data-raw'));
+  });
 
   form.addEventListener('submit', async e=>{
     e.preventDefault();
@@ -81,7 +137,7 @@
       const r = await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:q})});
       const j = await r.json();
       typing.remove();
-      if(j.ok){ addMsg(j.reply || '(пустой ответ)','bot'); }
+      if(j.ok){ addMsg(j.reply || '(пустой ответ)','bot',true); }
       else { addMsg(j.message || j.error || 'Ошибка связи с ИИ','bot'); }
     }catch(err){
       typing.remove();
@@ -93,7 +149,7 @@
     if(!confirm('Очистить всю историю диалога?')) return;
     await fetch('/api/ai/history',{method:'DELETE'});
     box.innerHTML='';
-    addMsg('История очищена. Чем могу помочь?','bot');
+    addMsg('История очищена. Чем могу помочь?','bot',true);
   });
 })();
 </script>
