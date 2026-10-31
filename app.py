@@ -1313,9 +1313,19 @@ def ai_chat():
                          "content": m["text"]})
 
     def _save_answer(answer, source):
-        db.execute("INSERT INTO ai_messages(user_sub,role,text,created_at) VALUES(?,?,?,?)",
-                   (sub, "assistant", answer, datetime.now().isoformat(timespec="seconds")))
-        db.commit()
+        # ВАЖНО: вызывается из SSE-генератора ПОСЛЕ завершения request-контекста,
+        # когда g.db уже закрыт teardown'ом. Поэтому используем НОВОЕ независимое
+        # соединение к sqlite напрямую (без Flask app context).
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=15)
+            try:
+                conn.execute("INSERT INTO ai_messages(user_sub,role,text,created_at) VALUES(?,?,?,?)",
+                             (sub, "assistant", answer, datetime.now().isoformat(timespec="seconds")))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("ai save answer: %s", e)
 
     stream_wanted = str(d.get("stream") or "").lower() in ("1", "true", "yes", "sse")
 
