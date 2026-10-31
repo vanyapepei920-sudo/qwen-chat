@@ -1327,17 +1327,24 @@ def ai_chat():
         except Exception as e:
             log.warning("ai save answer: %s", e)
 
+    def _safe_sse(payload_dict):
+        # json.dumps с ensure_ascii=False может содержать символы \r\n — они ломают
+        # кадры SSE. Экраним переводы строк внутри JSON-строки.
+        s = json.dumps(payload_dict, ensure_ascii=False)
+        return s.replace("\r", "\\r").replace("\n", "\\n")
+
     stream_wanted = str(d.get("stream") or "").lower() in ("1", "true", "yes", "sse")
 
     if stream_wanted:
-        # SSE-ответ: куски текста в реальном времени + фолбэк на не-стриминг
+        # SSE-ответ: куски текста в реальном времени + фолбэк на не-стриминг.
+        # ВАЖНО: внутри генератора НЕ используем Flask-объекты (g.db, session) —
+        # request-контекст закрывается до того, как браузер дочитает поток.
         def gen():
             collected = []
             try:
                 for piece in _pollinations_chat_stream(messages):
                     collected.append(piece)
-                    payload = json.dumps({"delta": piece}, ensure_ascii=False)
-                    yield f"data: {payload}\n\n"
+                    yield "data: " + _safe_sse({"delta": piece}) + "\n\n"
             except Exception as e:
                 log.warning("ai stream: %s", e)
             answer = _sanitize_llm("".join(collected).strip(), None) if collected else None
@@ -1355,12 +1362,13 @@ def ai_chat():
                     "могу рассказать про скачивание приложений, категории, рекомендации, отзывы, права администратора "
                     "(/admin_streaker) и запрос прав организации (/store/request-access). Попробуйте ещё раз чуть позже.")
                 source = "offline"
-            _save_answer(answer, source)
             # если стриминг не дал кусков — отправляем весь ответ одним чанком
             if not collected:
-                payload = json.dumps({"delta": answer}, ensure_ascii=False)
-                yield f"data: {payload}\n\n"
-            yield f"data: {json.dumps({'done': True, 'source': source}, ensure_ascii=False)}\n\n"
+                yield "data: " + _safe_sse({"delta": answer}) + "\n\n"
+            # сохраняем ответ в БД ДО отправки финального события done —
+            # так запись точно произойдёт, даже если клиент мгновенно закроет соединение
+            _save_answer(answer, source)
+            yield "data: " + _safe_sse({"done": True, "source": source}) + "\n\n"
         return app.response_class(stream_with_context(gen()), mimetype="text/event-stream",
                                   headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
