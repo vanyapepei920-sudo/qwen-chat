@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}SearchGPT{% endblock %}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔎</text></svg>">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script>
+  // Тема применяется до загрузки CSS, чтобы не было "мигания"
+  (function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();
+</script>
+</head>
+<body>
+<header class="topbar">
+  <a class="logo-mini" href="/">
+    <span class="g">S</span><span class="e">e</span><span class="o">a</span><span class="r">r</span><span class="c">c</span><span class="h">h</span><span class="ai-badge">GPT</span>
+  </a>
+  {% if query is defined and query %}
+  <form class="searchbox-top" action="/search" method="get">
+    <input type="text" name="q" value="{{ query }}" autocomplete="off" aria-label="Поиск">
+    <button type="submit" class="btn-icon" aria-label="Найти">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+    </button>
+  </form>
+  {% else %}<div class="spacer"></div>{% endif %}
+
+  <div class="top-actions">
+    <button id="themeToggle" class="btn-icon" title="Тёмная/светлая тема" aria-label="Сменить тему">
+      <svg class="ico-moon" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/></svg>
+      <svg class="ico-sun" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M6.05 7.86 4.63 6.44A7.5 7.5 0 0 0 10.5 16.5v2h3v-2a7.5 7.5 0 0 0 5.87-3.62l-1.42 1.42a5.5 5.5 0 1 1-11.9-4.42zM12 6.5v-3h-1.5v3zM12 21v-3h1.5v3z"/></svg>
+    </button>
+    {% if user %}
+      <div class="avatar-menu">
+        <button class="avatar-btn" id="avatarBtn" title="{{ user.email }}">
+          {% if user.picture %}<img src="{{ user.picture }}" alt="" class="avatar">{% else %}<span class="avatar avatar-fallback">{{ user.name[0]|upper }}</span>{% endif %}
+        </button>
+        <div class="dropdown" id="userDropdown">
+          <div class="dd-head">
+            {% if user.picture %}<img src="{{ user.picture }}" class="avatar big" alt="">{% endif %}
+            <div><b>{{ user.name }}</b><br><span class="muted">{{ user.email }}</span></div>
+          </div>
+          <a class="dd-item" href="/auth/logout">Выйти</a>
+        </div>
+      </div>
+    {% else %}
+      <a class="signin" href="/auth/login">Войти</a>
+    {% endif %}
+  </div>
+</header>
+
+{% block content %}{% endblock %}
+
+<footer class="footer">
+  <span class="muted">SearchGPT · поиск на базе Google Custom Search · порт 4000</span>
+</footer>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

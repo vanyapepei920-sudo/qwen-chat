@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<main class="home">
+  <div class="logo-big" aria-hidden="true">
+    <span class="g">S</span><span class="e">e</span><span class="o">a</span><span class="r">r</span><span class="c">c</span><span class="h">h</span><span class="ai-badge">GPT</span>
+  </div>
+
+  <form class="searchbox" action="/search" method="get" id="homeForm">
+    <svg class="lens" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+    <input type="text" name="q" id="q" autocomplete="off" autofocus placeholder="Введите запрос — ИИ и Google ответят" aria-label="Поисковый запрос">
+    <button type="button" class="btn-icon clear-btn" id="clearBtn" title="Очистить" hidden>
+      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+    </button>
+    <span class="mic" title="Голосовой поиск недоступен в API-версии">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="#4285F4" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path fill="#EA4335" d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+    </span>
+  </form>
+
+  <div class="buttons">
+    <button class="gbtn" form="homeForm" type="submit">Поиск в SearchGPT</button>
+    <button class="gbtn" type="button" id="luckyBtn">Мне повезёт! 🍀</button>
+  </div>
+
+  <p class="hint muted">Страница результатов также показывает краткий ответ от ИИ со ссылками на источники.</p>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+  const q = document.getElementById('q');
+  const clearBtn = document.getElementById('clearBtn');
+  q.addEventListener('input', () => clearBtn.hidden = !q.value);
+  clearBtn.addEventListener('click', () => { q.value=''; clearBtn.hidden=true; q.focus(); });
+  document.getElementById('luckyBtn').addEventListener('click', () => {
+    if (q.value.trim()) location.href = '/search?q=' + encodeURIComponent(q.value) + '&lucky=1';
+    else q.focus();
+  });
+</script>
+{% endblock %}

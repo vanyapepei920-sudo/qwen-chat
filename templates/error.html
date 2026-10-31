@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — SearchGPT{% endblock %}
+{% block content %}
+<main class="home">
+  <div class="alert" style="max-width:640px">
+    <h2 style="margin-top:0">⚠️ {{ title }}</h2>
+    <p>{{ detail|safe }}</p>
+    <p class="muted">После заполнения .env перезапустите сервер: <code>python app.py</code></p>
+  </div>
+</main>
+{% endblock %}
